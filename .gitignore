@@ -48,3 +48,4 @@ Thumbs.db
 tmp/
 *.log
 
+coverage.xml
