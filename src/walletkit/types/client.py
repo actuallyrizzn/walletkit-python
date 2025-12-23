@@ -90,47 +90,18 @@ class INotifications(Protocol):
 class IWalletKit(ABC):
     """Abstract WalletKit interface."""
 
-    @property
-    @abstractmethod
-    def name(self) -> str:
-        """Client name."""
-        ...
+    name: str  # Not a property, just an attribute
+    engine: Any  # IWalletKitEngine
+    events: EventEmitter
+    logger: Any  # Logger
+    core: Any  # ICore
+    metadata: Metadata
+    sign_config: Optional[SignConfig]
 
-    @property
-    @abstractmethod
-    def engine(self) -> Any:  # IWalletKitEngine
-        """Engine controller."""
-        ...
-
-    @property
-    @abstractmethod
-    def events(self) -> EventEmitter:
-        """Event emitter."""
-        ...
-
-    @property
-    @abstractmethod
-    def logger(self) -> Any:  # Logger
-        """Logger instance."""
-        ...
-
-    @property
-    @abstractmethod
-    def core(self) -> Any:  # ICore
-        """Core instance."""
-        ...
-
-    @property
-    @abstractmethod
-    def metadata(self) -> Metadata:
-        """Wallet metadata."""
-        ...
-
-    @property
-    @abstractmethod
-    def sign_config(self) -> Optional[SignConfig]:
-        """Sign configuration."""
-        ...
+    def __init__(self, opts: Options) -> None:
+        """Initialize with options."""
+        # Base class doesn't need to do anything
+        pass
 
     @abstractmethod
     async def pair(self, uri: str, activate_pairing: Optional[bool] = None) -> None:

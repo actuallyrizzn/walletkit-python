@@ -8,11 +8,7 @@ from walletkit.types.client import Event, EventArguments, IWalletKit
 class IWalletKitEngine(ABC):
     """Abstract WalletKit Engine interface."""
 
-    @property
-    @abstractmethod
-    def sign_client(self) -> Any:  # ISignClient
-        """Sign client instance."""
-        ...
+    sign_client: Any  # ISignClient - not a property, just an attribute
 
     def __init__(self, client: IWalletKit) -> None:
         """Initialize engine with client."""
