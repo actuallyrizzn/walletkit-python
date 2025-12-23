@@ -122,7 +122,11 @@ def encode_type_byte(type_val: int) -> bytes:
     Returns:
         Type as bytes
     """
-    return str(type_val).encode("utf-8")
+    # WalletConnect JS uses uint8arrays base10 encoding which yields a single raw byte
+    # for small integers 0/1/2. We match that wire format here.
+    if type_val < 0 or type_val > 255:
+        raise ValueError("type_val must fit in a single byte")
+    return int(type_val).to_bytes(1, "big")
 
 
 def decode_type_byte(byte_data: bytes) -> int:
@@ -134,14 +138,19 @@ def decode_type_byte(byte_data: bytes) -> int:
     Returns:
         Type value
     """
-    # WalletConnect reference encodes the type byte as ASCII digits ("0","1","2"),
-    # but some environments/libraries may emit a raw byte (0x00/0x01/0x02).
+    if not byte_data:
+        raise ValueError("byte_data is empty")
+    # Primary: raw byte (WalletConnect JS / uint8arrays base10)
+    if len(byte_data) == 1:
+        return byte_data[0]
+    # Fallback: some older code encoded ascii digits; keep a safe fallback.
     try:
-        return int(byte_data.decode("utf-8"))
+        s = byte_data.decode("utf-8")
+        if s.isdigit():
+            return int(s)
     except Exception:
-        if len(byte_data) == 1:
-            return byte_data[0]
-        raise
+        pass
+    raise ValueError("Invalid type byte")
 
 
 def to_base64url(base64_str: str) -> str:

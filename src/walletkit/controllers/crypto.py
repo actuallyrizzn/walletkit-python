@@ -10,6 +10,7 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from walletkit.constants.crypto import CRYPTO_CLIENT_SEED, CRYPTO_CONTEXT, CRYPTO_JWT_TTL
 from walletkit.controllers.keychain import KeyChain
 from walletkit.utils.crypto_utils import (
+    BASE64,
     BASE64URL,
     TYPE_0,
     TYPE_1,
@@ -207,7 +208,9 @@ class Crypto:
             opts = {}
         
         message = json.dumps(payload)
-        encoding = opts.get("encoding", BASE64URL)
+        # WalletConnect sign-client uses base64 (padded) for relay payloads by default.
+        # base64url is primarily used for deeplinks / URI contexts.
+        encoding = opts.get("encoding", BASE64)
         
         # Check if type 2 envelope (unencrypted)
         if opts.get("type") == TYPE_2:
@@ -258,7 +261,7 @@ class Crypto:
         if opts is None:
             opts = {}
         
-        encoding = opts.get("encoding", BASE64URL)
+        encoding = opts.get("encoding", BASE64)
         
         # Check payload type
         payload_type = get_payload_type(encoded, encoding)
@@ -291,7 +294,7 @@ class Crypto:
             self.logger.error(str(error))
             raise
 
-    def get_payload_type(self, encoded: str, encoding: str = BASE64URL) -> int:
+    def get_payload_type(self, encoded: str, encoding: str = BASE64) -> int:
         """Get payload type from encoded message.
         
         Args:
@@ -304,7 +307,7 @@ class Crypto:
         return get_payload_type(encoded, encoding)
 
     def get_payload_sender_public_key(
-        self, encoded: str, encoding: str = BASE64URL
+        self, encoded: str, encoding: str = BASE64
     ) -> Optional[str]:
         """Get sender public key from encoded message.
         

@@ -853,13 +853,31 @@ async def test_sign_client_format_auth_message_missing_uri(sign_client):
 @pytest.mark.asyncio
 async def test_sign_client_format_auth_message_with_resources(sign_client):
     """Test format auth message with resources."""
+    import base64
+    import json
+
+    # Minimal recap that should be appended into the statement (WalletConnect behavior).
+    recap_obj = {
+        "att": {
+            "eip155": {
+                "request/eth_accounts": [{}],
+                "request/personal_sign": [{}],
+                "request/eth_sendTransaction": [{}],
+            }
+        }
+    }
+    recap_json = json.dumps(recap_obj, separators=(",", ":")).encode("utf-8")
+    recap_b64url = base64.urlsafe_b64encode(recap_json).decode("utf-8").replace("=", "")
+    recap_resource = f"urn:recap:{recap_b64url}"
+
     request = {
         "domain": "example.com",
         "aud": "https://example.com",
+        "statement": "Test statement",
         "version": "1",
-        "nonce": "12345",
-        "iat": "2023-01-01T00:00:00Z",
-        "resources": ["https://example.com/resource1", "https://example.com/resource2"],
+        "nonce": "test_nonce",
+        "iat": "2023-01-01T00:00:00.000Z",
+        "resources": ["https://example.com/resource1", recap_resource],
     }
     iss = "did:pkh:eip155:1:0x1234567890123456789012345678901234567890"
     
@@ -869,8 +887,14 @@ async def test_sign_client_format_auth_message_with_resources(sign_client):
     })
     
     assert "Resources:" in message
-    assert "resource1" in message
-    assert "resource2" in message
+    assert "- https://example.com/resource1" in message
+    assert f"- {recap_resource}" in message
+
+    expected_recap_stmt = (
+        "I further authorize the stated URI to perform the following actions on my behalf: "
+        "(1) 'request': 'eth_accounts', 'eth_sendTransaction', 'personal_sign' for 'eip155'."
+    )
+    assert "Test statement " + expected_recap_stmt in message
 
 
 @pytest.mark.asyncio

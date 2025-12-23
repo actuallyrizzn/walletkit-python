@@ -1,10 +1,12 @@
 """Tests for crypto utilities."""
+import base64
 import pytest
 
 from walletkit.utils.crypto_utils import (
     BASE64,
     TYPE_0,
     TYPE_1,
+    encode_type_byte,
     decrypt_message,
     derive_sym_key,
     encrypt_message,
@@ -60,6 +62,28 @@ def test_encrypt_decrypt():
     decrypted = decrypt_message(sym_key, encrypted)
     
     assert decrypted == message
+
+
+def test_encode_type_byte_is_single_raw_byte():
+    """WalletConnect type byte must be a single raw byte (not ASCII digit)."""
+    assert encode_type_byte(0) == b"\x00"
+    assert encode_type_byte(1) == b"\x01"
+    assert encode_type_byte(2) == b"\x02"
+
+
+def test_envelope_type_byte_roundtrip_base64():
+    """Ensure base64 envelope decodes to the correct raw type byte at position 0."""
+    sym_key = generate_random_bytes32()
+    msg = "hello"
+
+    enc0 = encrypt_message(sym_key, msg, type_val=TYPE_0, encoding=BASE64)
+    raw0 = base64.b64decode(enc0)
+    assert raw0[0] == 0
+
+    kp = generate_key_pair()
+    enc1 = encrypt_message(sym_key, msg, type_val=TYPE_1, sender_public_key=kp["publicKey"], encoding=BASE64)
+    raw1 = base64.b64decode(enc1)
+    assert raw1[0] == 1
 
 
 def test_encrypt_decrypt_type1():

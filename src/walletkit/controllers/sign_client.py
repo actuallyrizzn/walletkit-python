@@ -1,6 +1,8 @@
 """SignClient implementation for WalletConnect Sign Protocol."""
+import base64
 import json
 import os
+import time
 from typing import Any, Callable, Dict, Optional
 
 from walletkit.controllers.expirer import EXPIRER_EVENTS, parse_expirer_target
@@ -9,7 +11,12 @@ from walletkit.controllers.request_store import RequestStore
 from walletkit.controllers.session_store import SessionStore
 from walletkit.utils.crypto_utils import hash_key
 from walletkit.utils.events import EventEmitter
-from walletkit.utils.jsonrpc import format_jsonrpc_error, format_jsonrpc_result, get_big_int_rpc_id
+from walletkit.utils.jsonrpc import (
+    format_jsonrpc_error,
+    format_jsonrpc_result,
+    get_big_int_rpc_id,
+    is_jsonrpc_response,
+)
 
 
 class SignClient:
@@ -45,6 +52,9 @@ class SignClient:
         self._initialized = False
         self._pending_acknowledgments: Dict[str, Callable[[], Any]] = {}
         self._pending_auth_requests: Dict[int, Dict[str, Any]] = {}
+        # Idempotency caches (Venice retries proposals/auth if it doesn't see acceptance fast enough)
+        self._approved_proposals: Dict[int, Dict[str, Any]] = {}
+        self._approved_auth: Dict[int, Dict[str, Any]] = {}
 
     @classmethod
     async def init(
@@ -118,6 +128,11 @@ class SignClient:
                     # Helpful when we receive JSON-RPC responses (no method)
                     if not method:
                         self.core.logger.debug(f"[WC_DEBUG] inbound payload keys={list(payload.keys())}")
+                        if is_jsonrpc_response(payload):
+                            if "error" in payload:
+                                self.core.logger.debug(f"[WC_DEBUG] inbound response error={payload.get('error')}")
+                            else:
+                                self.core.logger.debug("[WC_DEBUG] inbound response result present")
 
                 # Handle based on method
                 method = payload.get("method")
@@ -410,9 +425,21 @@ class SignClient:
             except Exception:
                 pass
 
-        # Generate responder key pair + derive new session topic
-        responder_public_key = await self.core.crypto.generate_key_pair()
-        session_topic = await self.core.crypto.generate_shared_key(responder_public_key, proposer_public_key)
+        # Idempotency: if we already approved this proposal_id, reuse the same responder key + session topic.
+        cached = self._approved_proposals.get(proposal_id)
+        if cached:
+            responder_public_key = cached["responder_public_key"]
+            session_topic = cached["session_topic"]
+        else:
+            # Generate responder key pair + derive new session topic
+            responder_public_key = await self.core.crypto.generate_key_pair()
+            session_topic = await self.core.crypto.generate_shared_key(responder_public_key, proposer_public_key)
+            self._approved_proposals[proposal_id] = {
+                "responder_public_key": responder_public_key,
+                "session_topic": session_topic,
+                "pairing_topic": pairing_topic,
+                "proposer_public_key": proposer_public_key,
+            }
 
         # Subscribe to the new session topic so we can receive wc_sessionSettle and later requests
         await self.core.relayer.subscribe(session_topic)
@@ -498,6 +525,14 @@ class SignClient:
         proposal_response = {"relay": {"protocol": "irn"}, "responderPublicKey": responder_public_key}
         pairing_result = format_jsonrpc_result(proposal_id, proposal_response)
         encoded = await self.core.crypto.encode(pairing_topic, pairing_result)
+        self._capture_wc("session_propose_res", {
+            "pairing_topic": pairing_topic,
+            "session_topic": session_topic,
+            "proposal_id": proposal_id,
+            "responder_public_key": responder_public_key,
+            "encoded": encoded,
+            "sym_key": self.core.crypto.keychain.get(pairing_topic),
+        })
         # wc_sessionPropose.res => ttl=300, prompt=false, tag=1101
         await self.core.relayer.publish(pairing_topic, encoded, {"tag": 1101, "ttl": 300, "prompt": False})
 
@@ -521,6 +556,13 @@ class SignClient:
             "params": settle_params,
         }
         encoded_settle = await self.core.crypto.encode(session_topic, settle_request)
+        self._capture_wc("session_settle_req", {
+            "session_topic": session_topic,
+            "proposal_id": proposal_id,
+            "responder_public_key": responder_public_key,
+            "encoded": encoded_settle,
+            "sym_key": self.core.crypto.keychain.get(session_topic),
+        })
         # wc_sessionSettle.req => ttl=300, prompt=false, tag=1102
         await self.core.relayer.publish(session_topic, encoded_settle, {"tag": 1102, "ttl": 300, "prompt": False})
 
@@ -774,9 +816,13 @@ class SignClient:
         if not auths:
             raise ValueError("Auths required")
         
-        # Get pending auth request
+        # Get pending auth request. Venice/AppKit may emit duplicates; if we've already
+        # approved this auth_id, treat it as idempotent.
         auth_request = self._pending_auth_requests.get(auth_id)
         if not auth_request:
+            cached = self._approved_auth.get(auth_id)
+            if cached:
+                return {"session": {"topic": cached.get("session_topic")}}
             raise ValueError(f"Auth request not found: {auth_id}")
         
         params_obj = auth_request.get("params") or {}
@@ -794,10 +840,22 @@ class SignClient:
         # - response is JSON-RPC result (tag 1117) encrypted as TYPE_1 using requesterPublicKey
         response_topic = hash_key(requester_public_key)
 
-        responder_public_key = await self.core.crypto.generate_key_pair()
-        session_topic = await self.core.crypto.generate_shared_key(
-            responder_public_key, requester_public_key
-        )
+        # Idempotency: reuse responder/session for duplicate auth ids.
+        cached = self._approved_auth.get(auth_id)
+        if cached:
+            responder_public_key = cached["responder_public_key"]
+            session_topic = cached["session_topic"]
+        else:
+            responder_public_key = await self.core.crypto.generate_key_pair()
+            session_topic = await self.core.crypto.generate_shared_key(
+                responder_public_key, requester_public_key
+            )
+            self._approved_auth[auth_id] = {
+                "responder_public_key": responder_public_key,
+                "session_topic": session_topic,
+                "response_topic": response_topic,
+                "requester_public_key": requester_public_key,
+            }
         await self.core.relayer.subscribe(session_topic)
 
         result = {
@@ -811,6 +869,15 @@ class SignClient:
             "senderPublicKey": responder_public_key,
         }
         encoded = await self.core.crypto.encode(response_topic, response_payload, encode_opts)
+        self._capture_wc("session_auth_res", {
+            "auth_id": auth_id,
+            "response_topic": response_topic,
+            "requester_public_key": requester_public_key,
+            "responder_public_key": responder_public_key,
+            "encoded": encoded,
+            "sym_key": self.core.crypto.keychain.get(response_topic),
+            "encode_opts": encode_opts,
+        })
         # wc_sessionAuthenticate.res => ttl=ONE_HOUR(3600), prompt=false, tag=1117
         await self.core.relayer.publish(response_topic, encoded, {"tag": 1117, "ttl": 3600, "prompt": False})
         
@@ -951,8 +1018,17 @@ class SignClient:
         header = f"{domain} wants you to sign in with your {namespace_name} account:"
         wallet_address = address
         
-        # Statement (can be None/empty)
-        statement = request.get("statement") or None
+        # Statement (may be absent). WalletConnect also appends a Recap-derived
+        # authorization statement when a `urn:recap:` resource is present.
+        statement = request.get("statement")
+        resources = request.get("resources", [])
+        if isinstance(resources, list) and resources:
+            recap = resources[-1]
+            if isinstance(recap, str) and "urn:recap:" in recap:
+                statement = self._append_recap_statement(statement, recap)
+        # JS uses `statement || undefined`, i.e. empty string becomes omitted.
+        if statement == "":
+            statement = None
         
         # URI
         aud = request.get("aud")
@@ -987,9 +1063,8 @@ class SignClient:
         request_id_line = f"Request ID: {request_id}" if request_id else None
         
         # Resources
-        resources = request.get("resources", [])
         resources_line = None
-        if resources:
+        if isinstance(resources, list) and resources:
             resources_lines = "\n".join([f"- {r}" for r in resources])
             resources_line = f"Resources:\n{resources_lines}"
         
@@ -1016,6 +1091,85 @@ class SignClient:
         message = "\n".join([part for part in message_parts if part is not None])
         
         return message
+
+    def _append_recap_statement(self, statement: Any, recap_resource: str) -> str:
+        """Mirror @walletconnect/utils `formatStatementFromRecap` behavior.
+
+        This appends a fixed authorization sentence derived from the Recap (CAIP-122 resources)
+        to the provided statement.
+        """
+        base = "" if statement is None else str(statement)
+        prefix = "I further authorize the stated URI to perform the following actions on my behalf: "
+        if prefix in base:
+            return base
+
+        encoded = recap_resource.replace("urn:recap:", "")
+        # base64url (no padding) -> bytes
+        padded = encoded + "=" * ((4 - (len(encoded) % 4)) % 4)
+        try:
+            data = base64.urlsafe_b64decode(padded.encode("utf-8"))
+            recap = json.loads(data.decode("utf-8"))
+        except Exception:
+            # If recap parsing fails, do not mutate the statement (best-effort).
+            return base
+
+        att = recap.get("att") if isinstance(recap, dict) else None
+        if not isinstance(att, dict) or not att:
+            return base
+
+        parts: list[str] = []
+        counter = 0
+        for resource in att.keys():
+            resource_att = att.get(resource)
+            if not isinstance(resource_att, dict) or not resource_att:
+                continue
+
+            abilities_actions: list[dict[str, str]] = []
+            for k in resource_att.keys():
+                if not isinstance(k, str) or "/" not in k:
+                    continue
+                ability, action = k.split("/", 1)
+                abilities_actions.append({"ability": ability, "action": action})
+
+            abilities_actions.sort(key=lambda x: x["action"])
+            grouped: dict[str, list[str]] = {}
+            for item in abilities_actions:
+                grouped.setdefault(item["ability"], []).append(item["action"])
+
+            ability_chunks: list[str] = []
+            for ability in grouped.keys():
+                counter += 1
+                actions = grouped[ability]
+                ability_chunks.append(
+                    f"({counter}) '{ability}': '" + "', '".join(actions) + f"' for '{resource}'."
+                )
+
+            chunk = ", ".join(ability_chunks).replace(".,", ".")
+            if chunk:
+                parts.append(chunk)
+
+        if not parts:
+            return base
+
+        recap_stmt = prefix + " ".join(parts)
+        return (base + " " if base else "") + recap_stmt
+
+    def _capture_wc(self, kind: str, payload: Dict[str, Any]) -> None:
+        """Append a JSONL capture record for debugging against JS reference tools."""
+        path = os.getenv("WC_CAPTURE_PATH")
+        if not path:
+            return
+        record = {
+            "ts": int(time.time()),
+            "kind": kind,
+            **payload,
+        }
+        try:
+            with open(path, "a", encoding="utf-8") as f:
+                f.write(json.dumps(record) + "\n")
+        except Exception:
+            # Never break protocol flow due to capture I/O.
+            pass
     
     def _register_expirer_events(self) -> None:
         """Register expirer event listeners."""

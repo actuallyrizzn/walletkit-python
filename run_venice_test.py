@@ -132,6 +132,26 @@ async def main():
     base_rpc = os.getenv("ETH_RPC_URL_BASE", "https://base.publicnode.com")
     # Venice is a Base app; keep both mainnet + base available in namespaces.
     desired_chains = ["eip155:1", "eip155:8453"]
+    # Venice/AppKit may expect broader method support than the minimal proposal lists.
+    extra_methods = [
+        "personal_sign",
+        "eth_sign",
+        "eth_accounts",
+        "eth_requestAccounts",
+        "eth_sendTransaction",
+        "eth_signTransaction",
+        "eth_sendRawTransaction",
+        "eth_signTypedData",
+        "eth_signTypedData_v3",
+        "eth_signTypedData_v4",
+        "wallet_sendCalls",
+        "wallet_getCapabilities",
+        "wallet_getCallsStatus",
+        "wallet_getPermissions",
+        "wallet_grantPermissions",
+        "wallet_switchEthereumChain",
+        "wallet_addEthereumChain",
+    ]
     signing_wait_s = float(os.getenv("VENICE_SIGNING_WAIT_SECS", "30"))
     
     print("=" * 70)
@@ -165,6 +185,17 @@ async def main():
         # Allow clipboard-based extraction via "Copy link" in Web3Modal
         context = await browser.new_context(permissions=["clipboard-read", "clipboard-write"])
         page = await context.new_page()
+
+        # Surface any walletconnect/web3modal errors from the browser console.
+        def on_console(msg):
+            try:
+                text = msg.text()
+                if text:
+                    print(f"    [BROWSER:{msg.type}] {text[:400]}")
+            except Exception:
+                pass
+
+        page.on("console", on_console)
         
         # Monitor network for WalletConnect URIs
         captured_uris = []
@@ -294,6 +325,23 @@ async def main():
             wallet = await WalletKit.init({"core": core, "metadata": metadata})
             wallet._ethereum_account = account
 
+            # Log any JSON-RPC responses coming back from the relay (e.g. if Venice rejects our settle/auth)
+            async def on_relayer_response(payload: dict) -> None:
+                try:
+                    rid = payload.get("id")
+                    if "error" in payload:
+                        print(f"    [RESPONSE][ERROR] id={rid} err={payload.get('error')}")
+                    else:
+                        # Keep this concise; we mainly care about errors
+                        print(f"    [RESPONSE] id={rid} ok")
+                except Exception:
+                    pass
+
+            try:
+                wallet.core.relayer.on("response", on_relayer_response)
+            except Exception:
+                pass
+
             session_ready = asyncio.Event()
             signing_request_seen = asyncio.Event()
             session_topic = None
@@ -305,33 +353,40 @@ async def main():
                 params = event.get("params", {})
 
                 print(f"\n[SESSION] Proposal received (ID: {proposal_id})")
+                try:
+                    rn = params.get("requiredNamespaces")
+                    on = params.get("optionalNamespaces")
+                    if rn is not None:
+                        print(f"    requiredNamespaces={json.dumps(rn)[:800]}")
+                    if on is not None:
+                        print(f"    optionalNamespaces={json.dumps(on)[:800]}")
+                except Exception:
+                    pass
 
                 try:
                     required_namespaces = params.get("requiredNamespaces", {})
+                    optional_namespaces = params.get("optionalNamespaces", {}) or {}
                     namespaces = {}
 
-                    if "eip155" in required_namespaces:
-                        chains = required_namespaces["eip155"].get("chains", ["eip155:1"])
-                        # Approve at minimum mainnet + base, while ensuring we satisfy required chains.
-                        merged = []
-                        for c in list(chains) + desired_chains:
-                            if isinstance(c, str) and c not in merged:
-                                merged.append(c)
-                        chains = merged
-                        accounts = [f"{chain}:{wallet_address}" for chain in chains]
-                        namespaces["eip155"] = {
-                            "accounts": accounts,
-                            "chains": chains,
-                            "methods": required_namespaces["eip155"].get("methods", ["personal_sign", "eth_sign"]),
-                            "events": required_namespaces["eip155"].get("events", ["chainChanged", "accountsChanged"]),
-                        }
-                    else:
-                        namespaces["eip155"] = {
-                            "accounts": [f"{c}:{wallet_address}" for c in desired_chains],
-                            "chains": desired_chains,
-                            "methods": ["personal_sign", "eth_sign"],
-                            "events": ["chainChanged", "accountsChanged"],
-                        }
+                    # Venice uses optionalNamespaces (Base-only). Be strict and approve a subset
+                    # of the requested chains/methods/events to avoid client-side validation failures.
+                    eip155_req = required_namespaces.get("eip155") or {}
+                    eip155_opt = optional_namespaces.get("eip155") or {}
+
+                    chains = eip155_req.get("chains") or eip155_opt.get("chains") or desired_chains
+                    methods = eip155_req.get("methods") or eip155_opt.get("methods") or extra_methods
+                    events = eip155_req.get("events") or eip155_opt.get("events") or ["chainChanged", "accountsChanged"]
+
+                    # Ensure base is present (Venice is a Base app), but do NOT add extra chains.
+                    if isinstance(chains, list) and "eip155:8453" not in chains:
+                        chains = list(chains) + ["eip155:8453"]
+
+                    accounts = [f"{chain}:{wallet_address}" for chain in chains if isinstance(chain, str)]
+                    namespaces["eip155"] = {
+                        "accounts": accounts,
+                        "methods": [m for m in methods if isinstance(m, str)],
+                        "events": [e for e in events if isinstance(e, str)],
+                    }
 
                     result = await wallet.approve_session(id=proposal_id, namespaces=namespaces)
                     session_topic = result.get("topic")
@@ -422,6 +477,21 @@ async def main():
                         iss_raw = f"{chain}:{wallet_address}"  # matches JS: `${chain}:${address}`
 
                         message = wallet.format_auth_message(payload_params, iss_raw)
+                        # Capture one sample for JS comparison/debugging
+                        if os.getenv("AUTHMSG_CAPTURE") == "1" and not os.path.exists("authmsg_capture.json"):
+                            try:
+                                with open("authmsg_capture.json", "w", encoding="utf-8") as f:
+                                    json.dump(
+                                        {
+                                            "request": payload_params,
+                                            "iss": iss_raw,
+                                            "python_message": message,
+                                        },
+                                        f,
+                                        indent=2,
+                                    )
+                            except Exception:
+                                pass
                         sig = sign_personal_message(account["private_key"], message)
 
                         # Mirror @walletconnect/utils buildAuthObject:
@@ -454,7 +524,7 @@ async def main():
                     await wallet.approve_session_authenticate({"id": auth_id, "auths": auths})
                     print("    [AUTH][OK] Sent wc_sessionAuthenticateApprove")
                 except Exception as e:
-                    print(f"    [AUTH][ERROR] approve_session_authenticate failed: {e}")
+                    print(f"    [AUTH][ERROR] approve_session_authenticate failed: {type(e).__name__}: {e!r}")
 
             wallet.on("session_proposal", on_proposal)
             wallet.on("session_request", on_request)
