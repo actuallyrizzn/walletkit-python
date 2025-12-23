@@ -62,3 +62,37 @@ async def test_core_storage_prefix(storage):
     
     assert core.storage_prefix == custom_prefix
 
+
+@pytest.mark.asyncio
+async def test_core_start_idempotent(storage):
+    """Test Core start is idempotent."""
+    core = Core(storage=storage)
+    await core.start()
+    assert core._initialized is True
+    
+    # Start again should not re-initialize
+    await core.start()
+    assert core._initialized is True
+
+
+@pytest.mark.asyncio
+async def test_core_default_logger_methods(storage):
+    """Test Core default logger methods."""
+    core = Core(storage=storage)
+    logger = core.logger
+    
+    # Test all logger methods
+    logger.trace("trace message")
+    logger.debug("debug message")
+    logger.info("info message")
+    logger.warn("warn message")
+    logger.warning("warning message")
+    logger.error("error message")
+    
+    # All methods should exist and be callable
+    assert hasattr(logger, "trace")
+    assert hasattr(logger, "debug")
+    assert hasattr(logger, "warn")
+    assert hasattr(logger, "warning")
+    assert hasattr(logger, "error")
+    assert hasattr(logger, "info")

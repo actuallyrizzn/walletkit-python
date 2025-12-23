@@ -944,3 +944,185 @@ async def test_sign_client_expirer_handles_proposal_expiry(sign_client):
     # Proposal should be deleted
     await asyncio.sleep(0.1)  # Give time for async operations
     assert not sign_client.proposal.has(proposal_id)
+
+
+@pytest.mark.asyncio
+async def test_sign_client_init_event_client_error(core):
+    """Test init with event_client error."""
+    # Make event_client.init raise an exception
+    core.event_client.init = AsyncMock(side_effect=Exception("Event client error"))
+    
+    sign_client = await SignClient.init(
+        core=core,
+        metadata={"name": "Test", "description": "Test"},
+    )
+    
+    # Should still initialize successfully
+    assert sign_client._initialized is True
+
+
+@pytest.mark.asyncio
+async def test_sign_client_relayer_message_handler_error(sign_client):
+    """Test relayer message handler error handling."""
+    # Emit message with invalid data
+    await sign_client.core.relayer.events.emit("message", {
+        "topic": "test_topic",
+        "message": "invalid_message",
+    })
+    
+    # Should handle error gracefully
+    await asyncio.sleep(0.1)
+
+
+@pytest.mark.asyncio
+async def test_sign_client_relayer_message_missing_topic(sign_client):
+    """Test relayer message handler with missing topic."""
+    await sign_client.core.relayer.events.emit("message", {
+        "message": "test_message",
+    })
+    
+    # Should handle gracefully
+    await asyncio.sleep(0.1)
+
+
+@pytest.mark.asyncio
+async def test_sign_client_relayer_message_missing_message(sign_client):
+    """Test relayer message handler with missing message."""
+    await sign_client.core.relayer.events.emit("message", {
+        "topic": "test_topic",
+    })
+    
+    # Should handle gracefully
+    await asyncio.sleep(0.1)
+
+
+@pytest.mark.asyncio
+async def test_sign_client_handle_protocol_message_wc_sessionSettle(sign_client):
+    """Test handling wc_sessionSettle message."""
+    topic = "test_topic"
+    payload = {
+        "method": "wc_sessionSettle",
+        "params": {
+            "topic": topic,
+            "session": {"topic": topic, "peer": {"metadata": {}}},
+        },
+        "id": 1,
+    }
+    
+    await sign_client._handle_protocol_message(topic, payload)
+    # Should handle without error
+
+
+@pytest.mark.asyncio
+async def test_sign_client_handle_protocol_message_wc_sessionEvent(sign_client):
+    """Test handling wc_sessionEvent message."""
+    topic = "test_topic"
+    payload = {
+        "method": "wc_sessionEvent",
+        "params": {
+            "topic": topic,
+            "event": {"name": "test_event", "data": {}},
+            "chainId": "eip155:1",
+        },
+        "id": 1,
+    }
+    
+    await sign_client._handle_protocol_message(topic, payload)
+    # Should handle without error
+
+
+@pytest.mark.asyncio
+async def test_sign_client_acknowledged_callback(sign_client):
+    """Test acknowledged callback in approve."""
+    # Create a proposal
+    proposal_id = 1
+    proposal = {
+        "id": proposal_id,
+        "params": {
+            "requiredNamespaces": {
+                "eip155": {"chains": ["1"], "methods": [], "events": []}
+            },
+        },
+    }
+    await sign_client.proposal.set(proposal_id, proposal)
+    
+    # Approve session
+    result = await sign_client.approve({
+        "id": proposal_id,
+        "namespaces": {
+            "eip155": {"chains": ["1"], "methods": [], "events": []}
+        },
+    })
+    
+    # Call acknowledged callback
+    ack_callback = result.get("acknowledged")
+    if ack_callback:
+        await ack_callback()
+    
+    # Proposal should be deleted
+    with pytest.raises(KeyError):
+        sign_client.proposal.get(proposal_id)
+
+
+@pytest.mark.asyncio
+async def test_sign_client_update_acknowledged_callback(sign_client):
+    """Test acknowledged callback in update."""
+    # Create a session first
+    topic = "test_topic"
+    session = {
+        "topic": topic,
+        "namespaces": {
+            "eip155": {"chains": ["1"], "methods": [], "events": []}
+        },
+        "peer": {"metadata": {}},
+    }
+    await sign_client.session.set(topic, session)
+    
+    # Update session
+    result = await sign_client.update({
+        "topic": topic,
+        "namespaces": {
+            "eip155": {"chains": ["1", "137"], "methods": [], "events": []}
+        },
+    })
+    
+    # Call acknowledged callback
+    ack_callback = result.get("acknowledged")
+    if ack_callback:
+        await ack_callback()
+
+
+@pytest.mark.asyncio
+async def test_sign_client_expirer_error_handling(sign_client):
+    """Test expirer error handling."""
+    # Create a proposal
+    proposal_id = 123
+    proposal = {
+        "id": proposal_id,
+        "params": {"requiredNamespaces": {}},
+    }
+    await sign_client.proposal.set(proposal_id, proposal)
+    
+    # Manually trigger expirer event with invalid data
+    from walletkit.controllers.expirer import EXPIRER_EVENTS
+    
+    await sign_client.core.expirer.events.emit(EXPIRER_EVENTS["expired"], {
+        "target": "invalid_target",
+    })
+    
+    # Should handle error gracefully
+    await asyncio.sleep(0.1)
+
+
+@pytest.mark.asyncio
+async def test_sign_client_event_listeners(sign_client):
+    """Test event listener methods."""
+    listener = lambda x: None
+    
+    # Test once
+    result = sign_client.once("test_event", listener)
+    assert result is not None
+    
+    # Test off
+    result = sign_client.off("test_event", listener)
+    assert result is not None

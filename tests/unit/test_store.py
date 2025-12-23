@@ -138,3 +138,58 @@ async def test_request_store(storage, logger):
     await store.delete(1)
     assert store.length == 0
 
+
+@pytest.mark.asyncio
+async def test_store_restore_with_none_values(storage, logger):
+    """Test store restore with None values in cached data."""
+    def get_key(data: Dict[str, Any]) -> str:
+        return data.get("key", "")
+    
+    # Store data with None values
+    await storage.set_item("wc@2:core:1.0//test_store", [
+        {"key": "key1", "value": "test1"},
+        None,  # None value should be skipped
+        {"key": "key2", "value": "test2"},
+    ])
+    
+    store = Store(storage, logger, "test_store", get_key=get_key)
+    await store.init()
+    
+    # Should only restore non-None values
+    assert store.length == 2
+    assert store.get("key1") == {"key": "key1", "value": "test1"}
+    assert store.get("key2") == {"key": "key2", "value": "test2"}
+
+
+@pytest.mark.asyncio
+async def test_store_restore_exception_handling(storage, logger):
+    """Test store restore exception handling."""
+    from unittest.mock import patch
+    
+    def get_key(data: Dict[str, Any]) -> str:
+        return data.get("key", "")
+    
+    # Store some data
+    await storage.set_item("wc@2:core:1.0//test_store", [{"key": "key1", "value": "test1"}])
+    
+    # Mock storage.get_item to raise exception
+    with patch.object(storage, "get_item", side_effect=Exception("Storage error")):
+        store = Store(storage, logger, "test_store", get_key=get_key)
+        # Should handle exception gracefully
+        await store.init()
+        assert store.length == 0
+
+
+@pytest.mark.asyncio
+async def test_store_check_initialized(storage, logger):
+    """Test _check_initialized raises error when not initialized."""
+    store = Store(storage, logger, "test_store")
+    
+    with pytest.raises(RuntimeError, match="not initialized"):
+        store.get("key1")
+    
+    with pytest.raises(RuntimeError, match="not initialized"):
+        await store.set("key1", {"value": "test"})
+    
+    with pytest.raises(RuntimeError, match="not initialized"):
+        store.get_all()

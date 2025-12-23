@@ -81,3 +81,23 @@ async def test_event_emitter_multiple_events():
     assert results["event2"] == ["data2"]
     assert results["event3"] == ["data3"]
 
+
+@pytest.mark.asyncio
+async def test_event_emitter_remove_once_listener_nonexistent():
+    """Test removing non-existent once listener triggers ValueError handling."""
+    emitter = EventEmitter()
+    
+    async def listener1(data):
+        pass
+    
+    async def listener2(data):
+        pass
+    
+    # Add listener1 as once listener
+    emitter.once("test", listener1)
+    
+    # Try to remove listener2 (not in once_listeners) - should handle ValueError
+    emitter.remove_listener("test", listener2)
+    
+    # listener1 should still be there
+    assert emitter.listener_count("test") == 1

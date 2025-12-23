@@ -91,3 +91,43 @@ async def test_event_emitter_remove_all_listeners_no_event():
     assert emitter.listener_count("event1") == 0
     assert emitter.listener_count("event2") == 0
 
+
+@pytest.mark.asyncio
+async def test_event_emitter_remove_all_listeners_specific_event():
+    """Test removing all listeners for a specific event."""
+    emitter = EventEmitter()
+    
+    async def listener1(data):
+        pass
+    
+    async def listener2(data):
+        pass
+    
+    emitter.on("event1", listener1)
+    emitter.on("event1", listener2)
+    emitter.on("event2", listener1)
+    
+    emitter.remove_all_listeners("event1")
+    
+    assert emitter.listener_count("event1") == 0
+    assert emitter.listener_count("event2") == 1  # Should still have listener
+
+
+@pytest.mark.asyncio
+async def test_event_emitter_sync_listener_in_once():
+    """Test sync listener in once listeners."""
+    emitter = EventEmitter()
+    call_count = 0
+    
+    def sync_listener(data):
+        nonlocal call_count
+        call_count += 1
+    
+    emitter.once("test", sync_listener)
+    
+    await emitter.emit("test", "data")
+    assert call_count == 1
+    
+    # Should not be called again
+    await emitter.emit("test", "data")
+    assert call_count == 1

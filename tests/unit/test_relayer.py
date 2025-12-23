@@ -773,6 +773,239 @@ async def test_relayer_send_updates_heartbeat(relayer):
 async def test_relayer_event_listeners(relayer):
     """Test event listener methods."""
     await relayer.init()
+
+
+@pytest.mark.asyncio
+async def test_relayer_disconnect_websocket_error(relayer):
+    """Test disconnect with websocket close error."""
+    await relayer.init()
+    
+    # Mock websocket that raises exception on close
+    mock_websocket = AsyncMock()
+    mock_websocket.close = AsyncMock(side_effect=Exception("Close error"))
+    relayer._websocket = mock_websocket
+    
+    # Should handle error gracefully
+    await relayer.disconnect()
+
+
+@pytest.mark.asyncio
+async def test_relayer_publish_retry_connect_error(relayer):
+    """Test publish retry with connect error."""
+    await relayer.init()
+    
+    # Mock to fail publish and raise error on connect
+    relayer._send = AsyncMock(side_effect=Exception("Send error"))
+    relayer.connect = AsyncMock(side_effect=Exception("Connect error"))
+    relayer.connected = False
+    
+    # Should handle connect error gracefully
+    with pytest.raises(Exception, match="Send error"):
+        await relayer.publish("test_topic", "test_message", max_retries=1)
+
+
+@pytest.mark.asyncio
+async def test_relayer_subscribe_auto_connect(relayer):
+    """Test subscribe auto-connects when not connected."""
+    await relayer.init()
+    
+    relayer.connected = False
+    relayer.connect = AsyncMock()
+    relayer._send = AsyncMock(return_value="sub_id")
+    
+    result = await relayer.subscribe("test_topic")
+    
+    relayer.connect.assert_called_once()
+    assert result == "sub_id"
+
+
+@pytest.mark.asyncio
+async def test_relayer_receive_messages_no_websocket(relayer):
+    """Test _receive_messages when websocket is None."""
+    await relayer.init()
+    
+    relayer._websocket = None
+    
+    # Should return early without error
+    await relayer._receive_messages()
+
+
+@pytest.mark.asyncio
+async def test_relayer_receive_messages_handle_error(relayer):
+    """Test _receive_messages error handling."""
+    await relayer.init()
+    
+    async def error_generator():
+        yield '{"test": "message"}'
+        raise Exception("Handle error")
+        yield  # Never reached
+    
+    mock_websocket = AsyncMock()
+    mock_websocket.__aiter__ = lambda: error_generator()
+    relayer._websocket = mock_websocket
+    relayer._connected = True
+    relayer._handle_message = AsyncMock(side_effect=Exception("Handle error"))
+    
+    # Should handle error gracefully
+    await relayer._receive_messages()
+
+
+@pytest.mark.asyncio
+async def test_relayer_receive_messages_connection_closed_reconnect(relayer):
+    """Test _receive_messages with ConnectionClosed and reconnection."""
+    await relayer.init()
+    
+    relayer._should_reconnect = True
+    relayer._start_reconnect = AsyncMock()
+    
+    async def closed_generator():
+        raise ConnectionClosed(None, None)
+        yield
+    
+    mock_websocket = AsyncMock()
+    mock_websocket.__aiter__ = lambda: closed_generator()
+    relayer._websocket = mock_websocket
+    relayer._connected = True
+    
+    await relayer._receive_messages()
+    
+    # Should start reconnection
+    relayer._start_reconnect.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_relayer_process_queue_error(relayer):
+    """Test _process_queue error handling."""
+    await relayer.init()
+    
+    relayer._message_queue = [{"topic": "test", "message": "test"}]
+    relayer._send = AsyncMock(side_effect=Exception("Send error"))
+    
+    # Should handle error and re-queue message
+    await relayer._process_queue()
+    
+    # Message should be back in queue
+    assert len(relayer._message_queue) == 1
+
+
+@pytest.mark.asyncio
+async def test_relayer_start_reconnect_already_reconnecting(relayer):
+    """Test _start_reconnect when already reconnecting."""
+    await relayer.init()
+    
+    # Create a task that's not done
+    mock_task = AsyncMock()
+    mock_task.done = MagicMock(return_value=False)
+    relayer._reconnect_task = mock_task
+    
+    # Should return early
+    await relayer._start_reconnect()
+    
+    # Should not create new task
+    assert relayer._reconnect_task == mock_task
+
+
+@pytest.mark.asyncio
+async def test_relayer_reconnect_loop_already_connected(relayer):
+    """Test _reconnect_loop when already connected."""
+    await relayer.init()
+    
+    relayer._should_reconnect = True
+    relayer._connected = True
+    
+    # Should break early
+    await relayer._reconnect_loop()
+
+
+@pytest.mark.asyncio
+async def test_relayer_reconnect_loop_success(relayer):
+    """Test _reconnect_loop successful reconnection."""
+    await relayer.init()
+    
+    relayer._should_reconnect = True
+    relayer._connected = False
+    relayer._reconnect_attempts = 0
+    relayer._do_connect = AsyncMock()
+    
+    # Mock to succeed on first attempt
+    async def mock_do_connect():
+        relayer._connected = True
+    
+    relayer._do_connect = mock_do_connect
+    
+    await relayer._reconnect_loop()
+    
+    assert relayer._connected is True
+
+
+@pytest.mark.asyncio
+async def test_relayer_heartbeat_monitor_not_connected(relayer):
+    """Test _heartbeat_monitor when not connected."""
+    await relayer.init()
+    
+    relayer._connected = False
+    relayer._should_reconnect = True
+    
+    # Should break early
+    task = asyncio.create_task(relayer._heartbeat_monitor())
+    await asyncio.sleep(0.1)
+    task.cancel()
+    try:
+        await task
+    except asyncio.CancelledError:
+        pass
+
+
+@pytest.mark.asyncio
+async def test_relayer_heartbeat_monitor_websocket_close_error(relayer):
+    """Test _heartbeat_monitor with websocket close error."""
+    await relayer.init()
+    
+    relayer._connected = True
+    relayer._should_reconnect = True
+    relayer._last_heartbeat = asyncio.get_event_loop().time() - 1000  # Old heartbeat
+    
+    # Mock websocket that raises exception on close
+    mock_websocket = AsyncMock()
+    mock_websocket.close = AsyncMock(side_effect=Exception("Close error"))
+    relayer._websocket = mock_websocket
+    
+    # Should handle error gracefully
+    task = asyncio.create_task(relayer._heartbeat_monitor())
+    await asyncio.sleep(0.1)
+    task.cancel()
+    try:
+        await task
+    except asyncio.CancelledError:
+        pass
+
+
+@pytest.mark.asyncio
+async def test_relayer_heartbeat_monitor_exception(relayer):
+    """Test _heartbeat_monitor exception handling."""
+    await relayer.init()
+    
+    relayer._connected = True
+    relayer._should_reconnect = True
+    
+    # Mock to raise exception
+    async def mock_sleep(delay):
+        raise Exception("Sleep error")
+    
+    import asyncio
+    original_sleep = asyncio.sleep
+    asyncio.sleep = mock_sleep
+    
+    try:
+        task = asyncio.create_task(relayer._heartbeat_monitor())
+        await asyncio.sleep(0.1)
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+    finally:
+        asyncio.sleep = original_sleep
     
     called = False
     

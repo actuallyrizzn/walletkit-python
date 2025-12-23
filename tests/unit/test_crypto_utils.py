@@ -81,3 +81,135 @@ def test_encrypt_decrypt_type1():
     decrypted = decrypt_message(sym_key, encrypted)
     assert decrypted == message
 
+
+def test_encrypt_decrypt_base64url():
+    """Test encryption/decryption with base64url encoding."""
+    from walletkit.utils.crypto_utils import BASE64URL
+    
+    sym_key = generate_random_bytes32()
+    message = "test message"
+    
+    encrypted = encrypt_message(sym_key, message, encoding=BASE64URL)
+    decrypted = decrypt_message(sym_key, encrypted, encoding=BASE64URL)
+    
+    assert decrypted == message
+
+
+def test_encrypt_message_type1_missing_key():
+    """Test encrypt_message type 1 with missing sender key."""
+    sym_key = generate_random_bytes32()
+    
+    with pytest.raises(ValueError, match="Missing sender public key"):
+        encrypt_message(
+            sym_key,
+            "test",
+            type_val=TYPE_1,
+            sender_public_key=None,
+        )
+
+
+def test_decrypt_message_error():
+    """Test decrypt_message error handling."""
+    sym_key = generate_random_bytes32()
+    
+    # Invalid encrypted message
+    with pytest.raises(ValueError, match="Failed to decrypt"):
+        decrypt_message(sym_key, "invalid_base64")
+
+
+def test_encode_decode_type_two():
+    """Test type 2 envelope encoding/decoding."""
+    from walletkit.utils.crypto_utils import (
+        encode_type_two_envelope,
+        decode_type_two_envelope,
+    )
+    
+    message = "test message"
+    encoded = encode_type_two_envelope(message)
+    decoded = decode_type_two_envelope(encoded)
+    
+    assert decoded == message
+
+
+def test_encode_decode_type_two_base64url():
+    """Test type 2 envelope with base64url encoding."""
+    from walletkit.utils.crypto_utils import (
+        encode_type_two_envelope,
+        decode_type_two_envelope,
+        BASE64URL,
+    )
+    
+    message = "test message"
+    encoded = encode_type_two_envelope(message, encoding=BASE64URL)
+    decoded = decode_type_two_envelope(encoded, encoding=BASE64URL)
+    
+    assert decoded == message
+
+
+def test_get_payload_type():
+    """Test get_payload_type function."""
+    from walletkit.utils.crypto_utils import get_payload_type, TYPE_0, TYPE_1, TYPE_2
+    
+    sym_key = generate_random_bytes32()
+    message = "test"
+    
+    # Test TYPE_0
+    encrypted = encrypt_message(sym_key, message, type_val=TYPE_0)
+    payload_type = get_payload_type(encrypted)
+    assert payload_type == TYPE_0
+    
+    # Test TYPE_1
+    key_pair = generate_key_pair()
+    encrypted = encrypt_message(
+        sym_key,
+        message,
+        type_val=TYPE_1,
+        sender_public_key=key_pair["publicKey"],
+    )
+    payload_type = get_payload_type(encrypted)
+    assert payload_type == TYPE_1
+    
+    # Test TYPE_2
+    from walletkit.utils.crypto_utils import encode_type_two_envelope
+    encoded = encode_type_two_envelope(message)
+    payload_type = get_payload_type(encoded)
+    assert payload_type == TYPE_2
+
+
+def test_get_payload_sender_public_key():
+    """Test get_payload_sender_public_key function."""
+    from walletkit.utils.crypto_utils import get_payload_sender_public_key
+    
+    key_pair = generate_key_pair()
+    key_pair_b = generate_key_pair()
+    sym_key = derive_sym_key(key_pair["privateKey"], key_pair_b["publicKey"])
+    
+    # TYPE_1 should have sender public key
+    encrypted = encrypt_message(
+        sym_key,
+        "test",
+        type_val=TYPE_1,
+        sender_public_key=key_pair["publicKey"],
+    )
+    sender_key = get_payload_sender_public_key(encrypted)
+    assert sender_key == key_pair["publicKey"]
+    
+    # TYPE_0 should not have sender public key
+    encrypted = encrypt_message(sym_key, "test", type_val=TYPE_0)
+    sender_key = get_payload_sender_public_key(encrypted)
+    assert sender_key is None
+
+
+def test_encrypt_message_with_iv():
+    """Test encrypt_message with custom IV."""
+    from walletkit.utils.crypto_utils import generate_random_bytes32
+    
+    sym_key = generate_random_bytes32()
+    iv = generate_random_bytes32()[:24]  # 12 bytes in hex = 24 chars
+    
+    message = "test message"
+    encrypted1 = encrypt_message(sym_key, message, iv=iv)
+    encrypted2 = encrypt_message(sym_key, message, iv=iv)
+    
+    # Same IV should produce same encrypted result
+    assert encrypted1 == encrypted2
