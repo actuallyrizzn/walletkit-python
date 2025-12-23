@@ -38,8 +38,8 @@ def sign_personal_message(private_key: str, message: str) -> str:
     # Sign the message
     signed_message = account.sign_message(message_encoded)
     
-    # Return signature as hex string
-    return signed_message.signature.hex()
+    # Return signature as hex string with 0x prefix
+    return "0x" + signed_message.signature.hex()
 
 
 def get_address_from_private_key(private_key: str) -> str:

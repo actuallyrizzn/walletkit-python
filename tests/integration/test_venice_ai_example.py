@@ -158,7 +158,7 @@ async def extract_walletconnect_uri(page: Page, timeout: float = 30.0) -> Option
                 
                 // Search for URI in text content
                 const textContent = document.body.innerText || document.body.textContent || '';
-                const wcUriMatch = textContent.match(/wc:[a-zA-Z0-9]+@\d+\?[^\s"']+/);
+                const wcUriMatch = textContent.match(/wc:[a-zA-Z0-9]+@\\d+\\?[^\\s"']+/);
                 if (wcUriMatch) return wcUriMatch[0];
                 
                 return null;
