@@ -31,6 +31,7 @@ tsconfig.tsbuildinfo
 test.db
 test.db-journal
 **/tmp
+tmp/
 setup
 result*
 ops/grafana/grafana.ini
