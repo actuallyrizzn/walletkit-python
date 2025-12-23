@@ -2,6 +2,8 @@
 from typing import Any, Optional
 
 from walletkit.controllers.crypto import Crypto
+from walletkit.controllers.echo_client import EchoClient
+from walletkit.controllers.event_client import EventClient
 from walletkit.controllers.expirer import Expirer
 from walletkit.controllers.keychain import KeyChain
 from walletkit.utils.events import EventEmitter
@@ -45,11 +47,9 @@ class Core:
         
         self.relayer = Relayer(self, self.logger, relay_url=self.relay_url, project_id=self.project_id)
         self.expirer = Expirer(self.storage, self.logger, storage_prefix=storage_prefix)
+        self.event_client = EventClient(self.storage, self.logger, telemetry_enabled=False, storage_prefix=storage_prefix)
+        self.echo_client = EchoClient(self.storage, self.logger, storage_prefix=storage_prefix)
         self.pairing = Pairing(self, self.logger)
-        
-        # Placeholders for other controllers (to be implemented)
-        self.echo_client: Any = None  # EchoClient
-        self.event_client: Any = None  # EventClient
         
         self._initialized = False
 
@@ -61,6 +61,8 @@ class Core:
         await self.crypto.init()
         await self.relayer.init()
         await self.expirer.init()
+        await self.event_client.init()
+        await self.echo_client.init()
         await self.pairing.init()
         
         self._initialized = True

@@ -1,6 +1,8 @@
 """Controllers package."""
 from walletkit.controllers.crypto import Crypto
+from walletkit.controllers.echo_client import EchoClient
 from walletkit.controllers.engine import Engine
+from walletkit.controllers.event_client import EventClient
 from walletkit.controllers.expirer import Expirer
 from walletkit.controllers.keychain import KeyChain
 from walletkit.controllers.pairing import Pairing
@@ -13,7 +15,9 @@ from walletkit.controllers.store import Store
 
 __all__ = [
     "Crypto",
+    "EchoClient",
     "Engine",
+    "EventClient",
     "Expirer",
     "KeyChain",
     "Pairing",

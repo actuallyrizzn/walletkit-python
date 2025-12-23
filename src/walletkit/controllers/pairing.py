@@ -2,6 +2,7 @@
 from typing import Any, Dict, Optional
 
 from walletkit.constants.crypto import CRYPTO_CLIENT_SEED
+from walletkit.controllers.expirer import EXPIRER_EVENTS, parse_expirer_target
 from walletkit.utils.crypto_utils import generate_random_bytes32
 from walletkit.utils.uri import format_uri, parse_uri
 
@@ -38,6 +39,9 @@ class Pairing:
         self.name = "pairing"
         self.version = "1.0"
         
+        from walletkit.utils.events import EventEmitter
+        self.events = EventEmitter()
+        
         # Store pairings in memory (will be replaced with proper Store later)
         self.pairings: Dict[str, Dict[str, Any]] = {}
         self._initialized = False
@@ -47,6 +51,8 @@ class Pairing:
         if not self._initialized:
             # TODO: Initialize store
             # await self.pairings.init()
+            # Register expirer events
+            self._register_expirer_events()
             self._initialized = True
             self.logger.info("Pairing initialized")
 
@@ -95,6 +101,9 @@ class Pairing:
         
         # Store pairing
         self.pairings[topic] = pairing
+        
+        # Register expiry with expirer
+        self.core.expirer.set(topic, expiry)
         
         # Subscribe to topic
         await self.core.relayer.subscribe(topic, {
@@ -181,7 +190,27 @@ class Pairing:
         if topic in self.pairings:
             # Unsubscribe from topic
             await self.core.relayer.unsubscribe(topic)
+            # Remove from expirer
+            if self.core.expirer.has(topic):
+                self.core.expirer.delete(topic)
             del self.pairings[topic]
+
+    def _register_expirer_events(self) -> None:
+        """Register expirer event listeners."""
+        async def on_expired(event: Dict[str, Any]) -> None:
+            """Handle pairing expiry."""
+            target = event.get("target", "")
+            try:
+                parsed = parse_expirer_target(target)
+                if parsed.get("type") == "topic":
+                    topic = parsed.get("value")
+                    if topic and topic in self.pairings:
+                        await self.delete(topic)
+                        self.events.emit("pairing_expire", {"topic": topic})
+            except Exception as e:
+                self.logger.error(f"Error handling pairing expiry: {e}")
+        
+        self.core.expirer.on(EXPIRER_EVENTS["expired"], on_expired)
 
     def _check_initialized(self) -> None:
         """Check if pairing is initialized."""
