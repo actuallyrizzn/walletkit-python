@@ -580,57 +580,125 @@ pytest -m integration
 - Pairing controller working
 - Tests passing
 
-### Phase 2: Sign Client (Week 4)
+### Phase 2: Sign Client (Week 4-5)
 
-- [ ] Implement minimal SignClient wrapper
-- [ ] Implement session management
+**Status:** ⚠️ Stub implementation complete, full implementation needed
+
+#### Week 4: SignClient Core Implementation
+- [x] Create SignClient stub (placeholder)
+- [ ] Implement Store for sessions (SessionStore)
+- [ ] Implement Store for proposals (ProposalStore)
+- [ ] Implement Store for pending requests (RequestStore)
+- [ ] Implement session state management
+- [ ] Implement proposal handling
+- [ ] Implement request/response queue
+- [ ] Write comprehensive tests
+
+#### Week 5: SignClient Protocol Implementation
+- [ ] Implement session proposal handling
+- [ ] Implement session approval flow
+- [ ] Implement session rejection flow
+- [ ] Implement session update/extend
 - [ ] Implement request/response handling
+- [ ] Implement session disconnect
+- [ ] Implement event emission
+- [ ] Implement message encryption/decryption integration
 - [ ] Write comprehensive tests
 
 **Deliverables:**
-- SignClient wrapper working
-- Session operations functional
-- Tests passing
+- Full SignClient implementation (not stub)
+- Session management working
+- Request/response handling working
+- All protocol operations functional
+- Tests passing (>80% coverage)
 
-### Phase 3: Engine and Client (Week 5)
+### Phase 3: Engine and Client (Week 6)
 
-- [ ] Port Engine controller
-- [ ] Port WalletKit client
-- [ ] Implement event bridging
+**Status:** ✅ Complete
+
+- [x] Port Engine controller
+- [x] Port WalletKit client
+- [x] Implement event bridging
+- [x] Write comprehensive tests
+
+**Deliverables:**
+- ✅ Engine controller working
+- ✅ WalletKit client working
+- ✅ Event system functional
+- ✅ Tests passing (40+ tests)
+
+### Phase 4: Store Implementation (Week 7)
+
+**Status:** ⚠️ Missing - Critical for SignClient
+
+#### Tasks
+- [ ] Implement Store base class (generic key-value store with persistence)
+- [ ] Implement SessionStore (manages active sessions)
+- [ ] Implement ProposalStore (manages pending proposals)
+- [ ] Implement RequestStore (manages pending requests)
+- [ ] Integrate stores with SignClient
+- [ ] Add storage persistence (file-based)
 - [ ] Write comprehensive tests
 
 **Deliverables:**
-- Engine controller working
-- WalletKit client working
-- Event system functional
+- Store abstraction working
+- All stores implemented
+- Persistence working
 - Tests passing
 
-### Phase 4: Utilities and Polish (Week 6)
+### Phase 5: Additional Controllers and Utilities (Week 8)
 
-- [ ] Port utilities
-- [ ] Port constants
-- [ ] Complete public API
+**Status:** ⚠️ Partially complete
+
+#### Tasks
+- [x] Implement Expirer controller (basic structure)
+- [ ] Complete Expirer implementation (expiry management)
+- [ ] Implement EventClient (analytics/telemetry)
+- [ ] Implement EchoClient (push notifications)
+- [ ] Implement Notifications utility (decryptMessage, getMetadata)
+- [ ] Port remaining utilities
+- [ ] Complete constants
+- [ ] Write comprehensive tests
+
+**Deliverables:**
+- All controllers implemented
+- Utilities complete
+- Constants ported
+- Tests passing
+
+### Phase 6: Integration and Polish (Week 9)
+
 - [ ] Write integration tests
 - [ ] Protocol compatibility testing
+- [ ] End-to-end flow testing
+- [ ] Performance testing
+- [ ] Error handling improvements
+- [ ] Complete public API documentation
 
 **Deliverables:**
-- Complete public API
 - Integration tests passing
 - Protocol compatibility verified
+- Performance benchmarks
+- Complete API surface
 
-### Phase 5: Testing and Documentation (Week 7)
+### Phase 7: Testing and Documentation (Week 10)
 
+**Status:** 🔄 In Progress
+
+- [x] Unit tests for core components (40+ tests)
 - [ ] Port all tests from JavaScript
-- [ ] Achieve >80% coverage
-- [ ] Write documentation
-- [ ] Create examples
-- [ ] Performance testing
+- [ ] Achieve >80% coverage (currently 64%)
+- [ ] Write comprehensive documentation
+- [ ] Create usage examples
+- [ ] Create API reference
+- [ ] Performance testing and optimization
 
 **Deliverables:**
 - Comprehensive test suite
-- High test coverage
+- >80% test coverage
 - Complete documentation
-- Example code
+- Example code and tutorials
+- API reference
 
 ## Dependencies Management
 
@@ -912,42 +980,101 @@ jobs:
 
 ## Timeline Summary
 
-| Phase | Duration | Key Deliverables |
-|-------|----------|------------------|
-| Phase 0: Foundation | Week 1 | Project setup, venv, test suite, core dependencies |
-| Phase 1: Core Controllers | Week 2-3 | Crypto, Relayer, Pairing controllers |
-| Phase 2: Sign Client | Week 4 | SignClient wrapper, session management |
-| Phase 3: Engine and Client | Week 5 | Engine, WalletKit client, events |
-| Phase 4: Utilities and Polish | Week 6 | Complete API, integration tests |
-| Phase 5: Testing and Docs | Week 7 | Test porting, documentation, examples |
+| Phase | Duration | Status | Key Deliverables |
+|-------|----------|--------|------------------|
+| Phase 0: Foundation | Week 1 | ✅ Complete | Project setup, venv, test suite, core dependencies |
+| Phase 1: Core Controllers | Week 2-3 | ✅ Complete | Crypto, Relayer, Pairing controllers |
+| Phase 2: Sign Client | Week 4-5 | ⚠️ Stub Only | **Full SignClient + Store implementation needed** |
+| Phase 3: Engine and Client | Week 6 | ✅ Complete | Engine, WalletKit client, events |
+| Phase 4: Store Implementation | Week 7 | ❌ Not Started | Store abstraction, SessionStore, ProposalStore, RequestStore |
+| Phase 5: Additional Controllers | Week 8 | 🔄 Partial | Expirer, EventClient, EchoClient, Notifications |
+| Phase 6: Integration and Polish | Week 9 | ❌ Not Started | Integration tests, protocol compatibility |
+| Phase 7: Testing and Docs | Week 10 | 🔄 In Progress | >80% coverage, documentation, examples |
 
-**Total Estimated Time:** 7 weeks
+**Total Estimated Time:** 10 weeks
+**Current Status:** ~60% complete (Phases 0, 1, 3 done; Phase 2 needs full implementation)
 
-## Next Steps
+## Current Status and Next Steps
 
-1. **Immediate:**
-   - Create virtual environment
-   - Set up project structure
-   - Configure testing suite
-   - Create initial test files
+### ✅ Completed (Phases 0, 1, 3)
+- Project setup and virtual environment
+- Core dependencies (EventEmitter, Storage, JSON-RPC, Crypto)
+- Core controllers (Crypto, Relayer, Pairing)
+- Engine controller
+- WalletKit client
+- 40+ unit tests passing
+- 64% code coverage
 
-2. **Week 1:**
-   - Implement EventEmitter
-   - Implement storage abstraction
-   - Port type definitions
-   - Set up CI/CD
+### ⚠️ Critical Missing Components
 
-3. **Week 2+:**
-   - Follow implementation phases
-   - Regular testing and code review
-   - Documentation as you go
+1. **Full SignClient Implementation** (Phase 2 - Week 4-5)
+   - Currently using stub placeholder
+   - Needs full session/proposal/request management
+   - Requires Store implementation first
 
-## TODO
+2. **Store Implementation** (Phase 4 - Week 7)
+   - SessionStore for active sessions
+   - ProposalStore for pending proposals
+   - RequestStore for pending requests
+   - Base Store abstraction with persistence
 
-- [ ] Create virtual environment
-- [ ] Set up project structure
-- [ ] Configure pytest
-- [ ] Create initial test files
+3. **Additional Controllers** (Phase 5 - Week 8)
+   - Expirer (expiry management)
+   - EventClient (analytics)
+   - EchoClient (push notifications)
+   - Notifications utility
+
+### 🎯 Immediate Next Steps (Priority Order)
+
+1. **Week 4-5: Full SignClient Implementation**
+   - Implement Store base class
+   - Implement SessionStore, ProposalStore, RequestStore
+   - Complete SignClient protocol implementation
+   - Replace stub with full implementation
+
+2. **Week 7: Store Implementation**
+   - Critical dependency for SignClient
+   - Should be done before or alongside SignClient
+
+3. **Week 8: Additional Controllers**
+   - Complete Expirer, EventClient, EchoClient
+   - Implement Notifications utility
+
+4. **Week 9: Integration Testing**
+   - End-to-end tests with real WalletConnect relay
+   - Protocol compatibility verification
+
+5. **Week 10: Documentation and Examples**
+   - Complete API documentation
+   - Create usage examples
+   - Performance optimization
+
+## TODO - Remaining Work
+
+### Critical (Blocking)
+- [ ] **Implement Store base class** (required for SignClient)
+- [ ] **Implement SessionStore** (required for SignClient)
+- [ ] **Implement ProposalStore** (required for SignClient)
+- [ ] **Implement RequestStore** (required for SignClient)
+- [ ] **Complete SignClient implementation** (replace stub)
+- [ ] **Integration tests** (validate protocol compatibility)
+
+### High Priority
+- [ ] Complete Expirer controller
+- [ ] Implement EventClient
+- [ ] Implement EchoClient
+- [ ] Implement Notifications utility
+- [ ] Increase test coverage to >80%
+
+### Medium Priority
 - [ ] Set up CI/CD pipeline
-- [ ] Begin Phase 0 implementation
+- [ ] Create usage examples
+- [ ] Complete API documentation
+- [ ] Performance optimization
+- [ ] Package distribution (PyPI)
+
+### Low Priority
+- [ ] Additional utilities
+- [ ] Advanced features
+- [ ] Migration guides
 

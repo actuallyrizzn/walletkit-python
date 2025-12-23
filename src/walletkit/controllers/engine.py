@@ -178,9 +178,9 @@ class Engine(IWalletKitEngine):
         if not self.sign_client:
             raise RuntimeError("Engine not initialized. Call init() first.")
         
-        # Placeholder - will use proper store later
-        sessions = self.sign_client.session
-        return {k: v for k, v in sessions.items()}
+        # Get all sessions from store
+        sessions = self.sign_client.session.values
+        return {session.get("topic", ""): session for session in sessions}
 
     def get_pending_session_proposals(self) -> Dict[int, Any]:
         """Get pending session proposals.
@@ -191,7 +191,8 @@ class Engine(IWalletKitEngine):
         if not self.sign_client:
             raise RuntimeError("Engine not initialized. Call init() first.")
         
-        return self.sign_client.proposal
+        proposals = self.sign_client.proposal.values
+        return {proposal.get("id", 0): proposal for proposal in proposals}
 
     def get_pending_session_requests(self) -> list[Dict[str, Any]]:
         """Get pending session requests.
