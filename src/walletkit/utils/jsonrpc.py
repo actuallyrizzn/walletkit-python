@@ -19,7 +19,7 @@ class JsonRpcError(Exception):
         super().__init__(f"JSON-RPC Error {code}: {message}")
 
 
-def format_jsonrpc_request(method: str, params: Optional[Any] = None, request_id: Optional[int] = None) -> Dict[str, Any]:
+def format_jsonrpc_request(method: str, params: Optional[Any] = None, request_id: Optional[Union[int, str]] = None) -> Dict[str, Any]:
     """Format a JSON-RPC request.
     
     Args:
@@ -136,4 +136,16 @@ def is_jsonrpc_error(payload: Dict[str, Any]) -> bool:
         True if error, False otherwise
     """
     return "error" in payload and "id" in payload
+
+
+def get_big_int_rpc_id() -> int:
+    """Generate a big integer RPC ID.
+    
+    Returns:
+        Large integer ID
+    """
+    import random
+    import time
+    # Generate a large random ID (similar to JS implementation)
+    return int(time.time() * 1000000) + random.randint(0, 999999)
 

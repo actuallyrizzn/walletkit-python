@@ -38,9 +38,14 @@ class Core:
         self.events = EventEmitter()
         self.crypto = Crypto(self.storage, self.logger, storage_prefix=storage_prefix)
         
+        # Initialize controllers
+        from walletkit.controllers.relayer import Relayer
+        from walletkit.controllers.pairing import Pairing
+        
+        self.relayer = Relayer(self, self.logger, relay_url=self.relay_url, project_id=self.project_id)
+        self.pairing = Pairing(self, self.logger)
+        
         # Placeholders for other controllers (to be implemented)
-        self.relayer: Any = None  # Relayer
-        self.pairing: Any = None  # Pairing
         self.echo_client: Any = None  # EchoClient
         self.event_client: Any = None  # EventClient
         
@@ -52,7 +57,8 @@ class Core:
             return
         
         await self.crypto.init()
-        # TODO: Initialize other controllers
+        await self.relayer.init()
+        await self.pairing.init()
         
         self._initialized = True
         self.logger.info("Core Initialization Success")
