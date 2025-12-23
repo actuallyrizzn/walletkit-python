@@ -896,6 +896,8 @@ async def test_sign_client_format_auth_message_with_expiration(sign_client):
 async def test_sign_client_expirer_handles_session_expiry(sign_client):
     """Test expirer handles session expiry."""
     import asyncio
+    from walletkit.controllers.expirer import EXPIRER_EVENTS
+    
     topic = "expiry_topic"
     
     import time
@@ -910,7 +912,7 @@ async def test_sign_client_expirer_handles_session_expiry(sign_client):
     await sign_client.session.set(topic, session)
     
     # Manually trigger expiry (simulating expirer event)
-    await sign_client.core.expirer.events.emit("expired", {
+    await sign_client.core.expirer.events.emit(EXPIRER_EVENTS["expired"], {
         "target": f"topic:{topic}",
     })
     
@@ -923,6 +925,8 @@ async def test_sign_client_expirer_handles_session_expiry(sign_client):
 async def test_sign_client_expirer_handles_proposal_expiry(sign_client):
     """Test expirer handles proposal expiry."""
     import asyncio
+    from walletkit.controllers.expirer import EXPIRER_EVENTS
+    
     proposal_id = 999
     
     proposal = {
@@ -933,7 +937,7 @@ async def test_sign_client_expirer_handles_proposal_expiry(sign_client):
     await sign_client.proposal.set(proposal_id, proposal)
     
     # Manually trigger expiry (simulating expirer event)
-    await sign_client.core.expirer.events.emit("expired", {
+    await sign_client.core.expirer.events.emit(EXPIRER_EVENTS["expired"], {
         "target": f"id:{proposal_id}",
     })
     

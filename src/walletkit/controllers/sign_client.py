@@ -355,7 +355,11 @@ class SignClient:
             raise ValueError("Proposal ID required")
         
         # Get proposal
-        proposal = self.proposal.get(proposal_id)
+        try:
+            proposal = self.proposal.get(proposal_id)
+        except KeyError:
+            raise ValueError("Proposal topic not found")
+        
         topic = proposal.get("topic")
         
         if not topic:
@@ -445,7 +449,11 @@ class SignClient:
             raise ValueError("Proposal ID required")
         
         # Get proposal
-        proposal = self.proposal.get(proposal_id)
+        try:
+            proposal = self.proposal.get(proposal_id)
+        except KeyError:
+            raise ValueError("Proposal topic not found")
+        
         topic = proposal.get("topic")
         
         if not topic:
@@ -927,4 +935,16 @@ class SignClient:
                 self.core.logger.error(f"Error handling expiry: {e}")
         
         self.core.expirer.on(EXPIRER_EVENTS["expired"], on_expired)
+    
+    def on(self, event: str, listener: Any) -> EventEmitter:
+        """Register event listener."""
+        return self.events.on(event, listener)
+    
+    def once(self, event: str, listener: Any) -> EventEmitter:
+        """Register one-time event listener."""
+        return self.events.once(event, listener)
+    
+    def off(self, event: str, listener: Any) -> EventEmitter:
+        """Remove event listener."""
+        return self.events.off(event, listener)
 
