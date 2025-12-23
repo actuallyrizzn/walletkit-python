@@ -275,7 +275,8 @@ class Relayer:
         # Store subscription
         self._subscribed_topics[topic] = request_id
         
-        self.events.emit("subscribe", {"topic": topic, "id": request_id})
+        # Fire-and-forget event emission
+        asyncio.create_task(self.events.emit("subscribe", {"topic": topic, "id": request_id}))
         
         return request_id
 
@@ -313,7 +314,8 @@ class Relayer:
         await self._send(request)
         
         del self._subscribed_topics[topic]
-        self.events.emit("unsubscribe", {"topic": topic})
+        # Fire-and-forget event emission
+        asyncio.create_task(self.events.emit("unsubscribe", {"topic": topic}))
 
     async def _send(self, payload: Dict[str, Any]) -> None:
         """Send message through WebSocket with timeout.
@@ -384,18 +386,20 @@ class Relayer:
             message = params.get("data", {}).get("message")
             
             if topic and message:
-                self.events.emit(
+                # Fire-and-forget event emission
+                asyncio.create_task(self.events.emit(
                     "message",
                     {
                         "topic": topic,
                         "message": message,
                     },
-                )
+                ))
         
         # Handle other message types
         elif payload.get("id"):
             # Response to our request
-            self.events.emit("response", payload)
+            # Fire-and-forget event emission
+            asyncio.create_task(self.events.emit("response", payload))
 
     async def _process_message_queue(self) -> None:
         """Process queued messages."""
