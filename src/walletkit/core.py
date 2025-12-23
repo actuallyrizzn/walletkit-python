@@ -88,6 +88,10 @@ class Core:
             def warn(self, msg: str, *args: Any) -> None:
                 print(f"[WARN] {msg}")
 
+            def warning(self, msg: str, *args: Any) -> None:
+                """Alias for warn for compatibility."""
+                self.warn(msg, *args)
+
             def error(self, msg: str, *args: Any) -> None:
                 print(f"[ERROR] {msg}")
 

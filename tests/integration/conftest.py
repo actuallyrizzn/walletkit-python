@@ -2,9 +2,6 @@
 import os
 import pytest
 
-# Skip integration tests if PROJECT_ID is not set
-pytest_plugins = []
-
 # Mark all tests in this directory as integration tests
 pytestmark = pytest.mark.integration
 

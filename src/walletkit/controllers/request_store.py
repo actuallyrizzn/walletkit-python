@@ -74,6 +74,22 @@ class RequestStore:
         self._check_initialized()
         return [req for req in self.requests if req.get("topic") == topic]
 
+    def has(self, id: int) -> bool:
+        """Check if request exists by ID.
+        
+        Args:
+            id: Request ID
+            
+        Returns:
+            True if request exists, False otherwise
+        """
+        self._check_initialized()
+        for req in self.requests:
+            request_data = req.get("request", {})
+            if request_data.get("id") == id:
+                return True
+        return False
+    
     def get_by_id(self, id: int) -> Dict[str, Any]:
         """Get request by ID.
         
