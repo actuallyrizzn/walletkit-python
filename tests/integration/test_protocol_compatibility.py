@@ -203,7 +203,9 @@ class TestCryptoCompatibility:
     
     def test_key_generation(self):
         """Test key pair generation produces valid keys."""
-        priv_key, pub_key = generate_key_pair()
+        key_pair = generate_key_pair()
+        priv_key = key_pair["privateKey"]
+        pub_key = key_pair["publicKey"]
         
         assert priv_key is not None
         assert pub_key is not None
@@ -212,24 +214,24 @@ class TestCryptoCompatibility:
     
     def test_key_derivation_commutative(self):
         """Test that key derivation is commutative (X25519 property)."""
-        priv_a, pub_a = generate_key_pair()
-        priv_b, pub_b = generate_key_pair()
+        key_pair_a = generate_key_pair()
+        key_pair_b = generate_key_pair()
         
-        key_ab = derive_sym_key(priv_a, pub_b)
-        key_ba = derive_sym_key(priv_b, pub_a)
+        key_ab = derive_sym_key(key_pair_a["privateKey"], key_pair_b["publicKey"])
+        key_ba = derive_sym_key(key_pair_b["privateKey"], key_pair_a["publicKey"])
         
         assert key_ab == key_ba, "Key derivation should be commutative"
     
     def test_encryption_decryption_roundtrip(self):
         """Test that encryption and decryption are inverse operations."""
-        priv_key, pub_key = generate_key_pair()
-        sym_key = derive_sym_key(priv_key, pub_key)
+        key_pair = generate_key_pair()
+        sym_key = derive_sym_key(key_pair["privateKey"], key_pair["publicKey"])
         
         message = {"jsonrpc": "2.0", "id": 1, "method": "test"}
         message_str = json.dumps(message)
         
-        encrypted = encrypt_message(message_str, sym_key)
-        decrypted = decrypt_message(encrypted, sym_key)
+        encrypted = encrypt_message(sym_key, message_str)
+        decrypted = decrypt_message(sym_key, encrypted)
         
         assert decrypted == message_str
         assert json.loads(decrypted) == message
@@ -259,13 +261,13 @@ class TestMessageEnvelopeFormat:
         """Test that encrypted messages have correct envelope structure."""
         # WalletConnect uses a specific envelope format for encrypted messages
         # This is typically: base64(encrypted_payload)
-        priv_key, pub_key = generate_key_pair()
-        sym_key = derive_sym_key(priv_key, pub_key)
+        key_pair = generate_key_pair()
+        sym_key = derive_sym_key(key_pair["privateKey"], key_pair["publicKey"])
         
         message = {"jsonrpc": "2.0", "id": 1, "method": "test"}
         message_str = json.dumps(message)
         
-        encrypted = encrypt_message(message_str, sym_key)
+        encrypted = encrypt_message(sym_key, message_str)
         
         # Encrypted message should be a string (base64 encoded)
         assert isinstance(encrypted, str)
