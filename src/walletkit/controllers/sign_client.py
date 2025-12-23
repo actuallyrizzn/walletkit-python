@@ -167,7 +167,7 @@ class SignClient:
         self.core.expirer.set(proposal_id, proposal_expiry)
         
         # Emit event
-        self.events.emit("session_proposal", {
+        await self.events.emit("session_proposal", {
             "id": proposal_id,
             "topic": topic,
             "params": params,
@@ -189,6 +189,11 @@ class SignClient:
         
         session["topic"] = topic
         await self.session.set(topic, session)
+        
+        # Register expiry with expirer
+        expiry = session.get("expiry")
+        if expiry:
+            self.core.expirer.set(topic, expiry)
         
         # Acknowledge if pending
         if topic in self._pending_acknowledgments:
@@ -217,7 +222,7 @@ class SignClient:
         })
         
         # Emit event
-        self.events.emit("session_request", {
+        await self.events.emit("session_request", {
             "id": request.get("id", request_id or 0),
             "topic": topic,
             "params": {
@@ -262,6 +267,9 @@ class SignClient:
         expiry = params.get("expiry")
         if expiry:
             await self.session.update(topic, {"expiry": expiry})
+            # Update expiry in expirer
+            if self.core.expirer.has(topic):
+                self.core.expirer.set(topic, expiry)
         
         # Acknowledge
         if topic in self._pending_acknowledgments:
@@ -282,7 +290,7 @@ class SignClient:
         await self.session.delete(topic)
         
         # Emit event
-        self.events.emit("session_delete", {
+        await self.events.emit("session_delete", {
             "id": request_id or 0,
             "topic": topic,
         })
@@ -312,7 +320,7 @@ class SignClient:
             request_id: Request ID
         """
         # Emit event
-        self.events.emit("session_authenticate", {
+        await self.events.emit("session_authenticate", {
             "id": request_id or 0,
             "topic": topic,
             "params": params,
@@ -509,9 +517,18 @@ class SignClient:
         if not topic:
             raise ValueError("Topic required")
         
+        # Get current session to verify it exists
+        session = self.session.get(topic)
+        
         # Calculate new expiry (7 days from now)
         import time
         expiry = int(time.time() * 1000) + (7 * 24 * 60 * 60 * 1000)
+        
+        # Update session expiry immediately
+        await self.session.update(topic, {"expiry": expiry})
+        # Update expiry in expirer
+        if self.core.expirer.has(topic):
+            self.core.expirer.set(topic, expiry)
         
         # Send extend
         payload = {
@@ -679,7 +696,7 @@ class SignClient:
                     if topic and self.session.has(topic):
                         await self.session.delete(topic)
                         await self.request_store.delete_by_topic(topic)
-                        self.events.emit("session_delete", {
+                        await self.events.emit("session_delete", {
                             "id": 0,
                             "topic": topic,
                         })
@@ -688,7 +705,7 @@ class SignClient:
                     proposal_id = value
                     if proposal_id and self.proposal.has(proposal_id):
                         await self.proposal.delete(proposal_id)
-                        self.events.emit("proposal_expire", {
+                        await self.events.emit("proposal_expire", {
                             "id": proposal_id,
                         })
             except Exception as e:

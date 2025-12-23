@@ -57,21 +57,22 @@ def parse_uri(uri: str) -> Dict[str, Any]:
         except Exception:
             pass
     
-    # Remove schema prefixes
-    if "wc://" in uri:
-        uri = uri.replace("wc://", "")
-    if uri.startswith("wc:"):
-        uri = uri.replace("wc:", "", 1)
+    # Extract protocol
+    protocol = "wc"
+    if uri.startswith("wc://"):
+        uri = uri[5:]  # Remove "wc://"
+        protocol = "wc"
+    elif uri.startswith("wc:"):
+        uri = uri[3:]  # Remove "wc:"
+        protocol = "wc"
     
-    # Parse URI
-    if ":" not in uri:
-        raise ValueError("Invalid URI format")
+    # Parse path (topic@version)
+    path_end = uri.index("?") if "?" in uri else len(uri)
+    path = uri[:path_end]
     
-    path_start = uri.index(":")
-    path_end = uri.index("?") if "?" in uri else None
-    
-    protocol = uri[:path_start]
-    path = uri[path_start + 1 : path_end] if path_end else uri[path_start + 1 :]
+    # Split topic@version
+    if "@" not in path:
+        raise ValueError("Invalid URI format: missing version")
     
     required_values = path.split("@")
     if len(required_values) != 2:
