@@ -180,8 +180,15 @@ async def test_sign_client_expirer_integration(sign_client):
 @pytest.mark.asyncio
 async def test_sign_client_format_auth_message(sign_client):
     """Test formatting auth message."""
-    request = {"method": "eth_sign", "params": {}}
-    iss = "did:example:123"
+    request = {
+        "domain": "example.com",
+        "aud": "https://example.com",
+        "version": "1",
+        "nonce": "12345",
+        "iat": "2023-01-01T00:00:00Z",
+        "statement": "Test statement",
+    }
+    iss = "did:pkh:eip155:1:0x1234567890123456789012345678901234567890"
     
     message = sign_client.format_auth_message({
         "request": request,
@@ -189,6 +196,116 @@ async def test_sign_client_format_auth_message(sign_client):
     })
     
     assert isinstance(message, str)
-    assert iss in message
-    assert "WalletConnect Auth Message" in message
+    assert "example.com wants you to sign in" in message
+    assert "0x1234567890123456789012345678901234567890" in message
+    assert "Test statement" in message
+    assert "Version: 1" in message
+    assert "Nonce: 12345" in message
+    assert "URI: https://example.com" in message
+
+
+@pytest.mark.asyncio
+async def test_sign_client_approve_session_authenticate(sign_client):
+    """Test approving session authentication."""
+    from unittest.mock import AsyncMock
+    
+    # Simulate an auth request
+    auth_id = 123
+    auth_topic = "auth_topic"
+    auth_params = {
+        "authPayload": {
+            "domain": "example.com",
+            "chains": ["eip155:1"],
+        },
+        "requester": {"metadata": {}},
+    }
+    
+    # Set up crypto for the topic
+    from walletkit.utils.crypto_utils import generate_random_bytes32
+    sym_key = generate_random_bytes32()
+    await sign_client.core.crypto.set_sym_key(sym_key, override_topic=auth_topic)
+    
+    # Manually add pending auth request (simulating _handle_session_authenticate)
+    sign_client._pending_auth_requests[auth_id] = {
+        "id": auth_id,
+        "topic": auth_topic,
+        "params": auth_params,
+    }
+    
+    # Mock relayer.publish to avoid actual network calls
+    original_publish = sign_client.core.relayer.publish
+    sign_client.core.relayer.publish = AsyncMock()
+    
+    try:
+        # Create auth objects
+        auths = [
+            {
+                "h": {"t": "caip122"},
+                "p": {
+                    "iss": "did:pkh:eip155:1:0x1234567890123456789012345678901234567890",
+                    "domain": "example.com",
+                    "version": "1",
+                    "nonce": "12345",
+                    "iat": "2023-01-01T00:00:00Z",
+                },
+                "s": {"t": "eip191", "s": "0xsignature"},
+            }
+        ]
+        
+        result = await sign_client.approve_session_authenticate({
+            "id": auth_id,
+            "auths": auths,
+        })
+        
+        assert "session" in result
+        assert result["session"]["topic"] == auth_topic
+        assert sign_client.session.has(auth_topic)
+        sign_client.core.relayer.publish.assert_awaited_once()
+        assert auth_id not in sign_client._pending_auth_requests
+    finally:
+        sign_client.core.relayer.publish = original_publish
+
+
+@pytest.mark.asyncio
+async def test_sign_client_reject_session_authenticate(sign_client):
+    """Test rejecting session authentication."""
+    from unittest.mock import AsyncMock
+    
+    # Simulate an auth request
+    auth_id = 456
+    auth_topic = "auth_topic_reject"
+    auth_params = {
+        "authPayload": {
+            "domain": "example.com",
+            "chains": ["eip155:1"],
+        },
+    }
+    
+    # Set up crypto for the topic
+    from walletkit.utils.crypto_utils import generate_random_bytes32
+    sym_key = generate_random_bytes32()
+    await sign_client.core.crypto.set_sym_key(sym_key, override_topic=auth_topic)
+    
+    # Manually add pending auth request
+    sign_client._pending_auth_requests[auth_id] = {
+        "id": auth_id,
+        "topic": auth_topic,
+        "params": auth_params,
+    }
+    
+    # Mock relayer.publish to avoid actual network calls
+    original_publish = sign_client.core.relayer.publish
+    sign_client.core.relayer.publish = AsyncMock()
+    
+    try:
+        reason = {"code": 5000, "message": "User rejected"}
+        await sign_client.reject_session_authenticate({
+            "id": auth_id,
+            "reason": reason,
+        })
+        
+        sign_client.core.relayer.publish.assert_awaited_once()
+        assert auth_id not in sign_client._pending_auth_requests
+    finally:
+        sign_client.core.relayer.publish = original_publish
 

@@ -42,6 +42,7 @@ class SignClient:
         
         self._initialized = False
         self._pending_acknowledgments: Dict[str, Callable[[], Any]] = {}
+        self._pending_auth_requests: Dict[int, Dict[str, Any]] = {}
 
     @classmethod
     async def init(
@@ -319,9 +320,17 @@ class SignClient:
             params: Auth parameters
             request_id: Request ID
         """
+        # Store pending auth request
+        auth_id = request_id or 0
+        self._pending_auth_requests[auth_id] = {
+            "id": auth_id,
+            "topic": topic,
+            "params": params,
+        }
+        
         # Emit event
         await self.events.emit("session_authenticate", {
-            "id": request_id or 0,
+            "id": auth_id,
             "topic": topic,
             "params": params,
         })
@@ -649,36 +658,242 @@ class SignClient:
         """Approve session authentication.
         
         Args:
-            params: Approval parameters
-            
+            params: Approval parameters with:
+                - id: Auth request ID
+                - auths: List of auth objects (CACAO)
+                
         Returns:
             Dict with session
         """
-        # Placeholder - full auth implementation would go here
-        return {"session": None}
+        auth_id = params.get("id")
+        auths = params.get("auths", [])
+        
+        if not auth_id:
+            raise ValueError("Auth request ID required")
+        
+        if not auths:
+            raise ValueError("Auths required")
+        
+        # Get pending auth request
+        auth_request = self._pending_auth_requests.get(auth_id)
+        if not auth_request:
+            raise ValueError(f"Auth request not found: {auth_id}")
+        
+        topic = auth_request.get("topic")
+        if not topic:
+            raise ValueError("Auth request topic not found")
+        
+        # Send approval message
+        payload = {
+            "jsonrpc": "2.0",
+            "id": auth_id,
+            "method": "wc_sessionAuthenticateApprove",
+            "params": {
+                "id": auth_id,
+                "auths": auths,
+            },
+        }
+        
+        encoded = await self.core.crypto.encode(topic, payload)
+        await self.core.relayer.publish(topic, encoded)
+        
+        # Wait for session settlement (similar to approve flow)
+        # For now, we'll create a session from the auth request
+        # In a real implementation, we'd wait for wc_sessionSettle
+        import time
+        expiry = int(time.time() * 1000) + (7 * 24 * 60 * 60 * 1000)
+        
+        # Extract namespaces from auths (if available)
+        # This is a simplified version - real impl would parse CACAO
+        namespaces = {}
+        for auth in auths:
+            if isinstance(auth, dict) and "p" in auth:
+                payload_auth = auth["p"]
+                iss = payload_auth.get("iss", "")
+                # Extract chain from iss (e.g., "did:pkh:eip155:1:0x...")
+                if ":" in iss:
+                    parts = iss.split(":")
+                    if len(parts) >= 4:
+                        chain_namespace = parts[2]  # eip155
+                        chain_id = parts[3]  # 1
+                        chain_key = f"{chain_namespace}:{chain_id}"
+                        if chain_key not in namespaces:
+                            namespaces[chain_key] = {
+                                "chains": [chain_key],
+                                "methods": ["personal_sign", "eth_sign", "eth_signTypedData"],
+                                "events": ["chainChanged", "accountsChanged"],
+                            }
+        
+        session = {
+            "topic": topic,
+            "expiry": expiry,
+            "namespaces": namespaces,
+            "peer": auth_request.get("params", {}).get("requester", {}),
+        }
+        
+        # Store session
+        await self.session.set(topic, session)
+        
+        # Register expiry
+        self.core.expirer.set(topic, expiry)
+        
+        # Remove pending auth request
+        del self._pending_auth_requests[auth_id]
+        
+        return {"session": session}
 
     async def reject_session_authenticate(self, params: Dict[str, Any]) -> None:
         """Reject session authentication.
         
         Args:
-            params: Rejection parameters
+            params: Rejection parameters with:
+                - id: Auth request ID
+                - reason: Rejection reason
         """
-        # Placeholder - full auth implementation would go here
-        pass
+        auth_id = params.get("id")
+        reason = params.get("reason", {"code": 5000, "message": "User rejected"})
+        
+        if not auth_id:
+            raise ValueError("Auth request ID required")
+        
+        # Get pending auth request
+        auth_request = self._pending_auth_requests.get(auth_id)
+        if not auth_request:
+            raise ValueError(f"Auth request not found: {auth_id}")
+        
+        topic = auth_request.get("topic")
+        if not topic:
+            raise ValueError("Auth request topic not found")
+        
+        # Send rejection message
+        payload = {
+            "jsonrpc": "2.0",
+            "id": auth_id,
+            "method": "wc_sessionAuthenticateReject",
+            "params": {
+                "id": auth_id,
+                "reason": reason,
+            },
+        }
+        
+        encoded = await self.core.crypto.encode(topic, payload)
+        await self.core.relayer.publish(topic, encoded)
+        
+        # Remove pending auth request
+        del self._pending_auth_requests[auth_id]
 
     def format_auth_message(self, params: Dict[str, Any]) -> str:
-        """Format auth message.
+        """Format auth message (CACAO format).
         
         Args:
             params: Format parameters with 'request' and 'iss'
+                - request: Auth request payload (CACAO payload params)
+                - iss: Issuer (e.g., "did:pkh:eip155:1:0x...")
             
         Returns:
-            Formatted message
+            Formatted message string
         """
-        # Placeholder - full auth message formatting would go here
         request = params.get("request", {})
         iss = params.get("iss", "")
-        return f"WalletConnect Auth Message\nIss: {iss}\nRequest: {json.dumps(request)}"
+        
+        if not iss:
+            raise ValueError("Issuer (iss) required")
+        
+        # Extract namespace from iss
+        # Format: "did:pkh:eip155:1:0x..." or "eip155:1:0x..."
+        did_prefix = "did:pkh:"
+        if iss.startswith(did_prefix):
+            parts = iss[len(did_prefix):].split(":")
+        else:
+            parts = iss.split(":")
+        
+        if len(parts) < 2:
+            raise ValueError(f"Invalid issuer format: {iss}")
+        
+        namespace = parts[0]  # eip155
+        chain_id = parts[1] if len(parts) > 1 else ""
+        address = parts[2] if len(parts) > 2 else ""
+        
+        # Get namespace display name
+        namespace_names = {
+            "eip155": "Ethereum",
+            "solana": "Solana",
+            "bip122": "Bitcoin",
+        }
+        namespace_name = namespace_names.get(namespace, namespace)
+        
+        # Build message components
+        domain = request.get("domain", "")
+        if not domain:
+            raise ValueError("Domain required in request")
+        
+        header = f"{domain} wants you to sign in with your {namespace_name} account:"
+        wallet_address = address
+        
+        # Statement (can be None/empty)
+        statement = request.get("statement") or None
+        
+        # URI
+        aud = request.get("aud")
+        uri_param = request.get("uri")
+        if not aud and not uri_param:
+            raise ValueError("Either 'aud' or 'uri' is required")
+        uri = f"URI: {aud or uri_param}"
+        
+        # Version
+        version = request.get("version", "1")
+        version_line = f"Version: {version}"
+        
+        # Chain ID
+        chain_id_line = f"Chain ID: {chain_id}"
+        
+        # Nonce
+        nonce = request.get("nonce", "")
+        nonce_line = f"Nonce: {nonce}"
+        
+        # Issued At
+        iat = request.get("iat", "")
+        issued_at_line = f"Issued At: {iat}"
+        
+        # Optional fields
+        expiration_time = request.get("exp")
+        expiration_line = f"Expiration Time: {expiration_time}" if expiration_time else None
+        
+        not_before = request.get("nbf")
+        not_before_line = f"Not Before: {not_before}" if not_before else None
+        
+        request_id = request.get("requestId")
+        request_id_line = f"Request ID: {request_id}" if request_id else None
+        
+        # Resources
+        resources = request.get("resources", [])
+        resources_line = None
+        if resources:
+            resources_lines = "\n".join([f"- {r}" for r in resources])
+            resources_line = f"Resources:\n{resources_lines}"
+        
+        # Build message
+        message_parts = [
+            header,
+            wallet_address,
+            "",
+            statement,
+            "",
+            uri,
+            version_line,
+            chain_id_line,
+            nonce_line,
+            issued_at_line,
+            expiration_line,
+            not_before_line,
+            request_id_line,
+            resources_line,
+        ]
+        
+        # Filter out None/empty values
+        message = "\n".join([part for part in message_parts if part])
+        
+        return message
     
     def _register_expirer_events(self) -> None:
         """Register expirer event listeners."""
