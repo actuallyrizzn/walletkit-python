@@ -1,349 +1,353 @@
-"""Standalone script to test venice.ai integration."""
+"""Fully automated venice.ai integration test - WORKING VERSION."""
 import asyncio
 import os
 import sys
+import re
 from walletkit import WalletKit, Core
 from walletkit.types.client import Metadata
 from walletkit.utils.storage import MemoryStorage
 from walletkit.utils.ethereum_signing import (
     generate_test_account,
     sign_personal_message,
-    get_address_from_private_key,
 )
 
 try:
     from playwright.async_api import async_playwright
 except ImportError:
-    print("ERROR: playwright not installed. Run: pip install playwright")
+    print("ERROR: playwright not installed")
     sys.exit(1)
 
+WC_URI_RE = re.compile(r"wc:[a-zA-Z0-9]+@\d+\?[^\s\"']+")
 
-async def extract_walletconnect_uri(page, timeout=30.0):
-    """Extract WalletConnect URI from page."""
-    # Try JavaScript extraction
+
+async def _try_get_clipboard_text(page) -> str:
+    """Best-effort clipboard read; returns empty string on failure."""
     try:
-        uri = await page.evaluate("""
-            () => {
-                if (window.walletConnectURI) return window.walletConnectURI;
-                if (window.WalletConnect && window.WalletConnect.uri) {
-                    return window.WalletConnect.uri;
-                }
-                const uriElements = document.querySelectorAll('[data-uri], [data-wc-uri]');
-                for (const el of uriElements) {
-                    const uri = el.getAttribute('data-uri') || el.getAttribute('data-wc-uri');
-                    if (uri && uri.startsWith('wc:')) return uri;
-                }
-                return null;
-            }
-        """)
-        if uri and uri.startswith("wc:"):
-            return uri
-    except Exception as e:
-        print(f"JavaScript extraction failed: {e}")
-    
+        return await page.evaluate("() => navigator.clipboard.readText().catch(() => '')")
+    except Exception:
+        return ""
+
+
+async def extract_wc_uri_from_web3modal(page) -> str | None:
+    """Extract a WalletConnect wc: URI from the Reown/Web3Modal UI.
+
+    Venice uses Reown AppKit/Web3Modal, which renders most of its UI in shadow DOM.
+    Prefer Playwright locators (shadow-piercing) + clipboard-based extraction.
+    """
+    # 1) Look for a direct link with wc:
+    try:
+        wc_href = page.locator("a[href^='wc:']").first
+        if await wc_href.count():
+            href = await wc_href.get_attribute("href")
+            if href and href.startswith("wc:"):
+                return href
+    except Exception:
+        pass
+
+    # 2) Click the "QR CODE" pill if present (often switches view)
+    try:
+        qr_btn = page.get_by_role("button", name=re.compile(r"^\s*QR\s*CODE\s*$", re.I)).first
+        if await qr_btn.is_visible():
+            await qr_btn.click(timeout=8000)
+            await asyncio.sleep(0.8)
+    except Exception:
+        pass
+
+    # 3) Click the "WalletConnect" row (sometimes required)
+    try:
+        wc_row = page.get_by_text("WalletConnect", exact=False).first
+        if await wc_row.is_visible():
+            await wc_row.click(timeout=8000)
+            await asyncio.sleep(0.8)
+    except Exception:
+        pass
+
+    # 4) Try "Copy" / "Copy link" then read clipboard
+    try:
+        copy_btn = page.get_by_role("button", name=re.compile(r"\bcopy\b", re.I)).first
+        if await copy_btn.is_visible():
+            await copy_btn.click(timeout=8000)
+            await asyncio.sleep(0.4)
+            clip = await _try_get_clipboard_text(page)
+            if clip and clip.startswith("wc:"):
+                return clip
+    except Exception:
+        pass
+
+    # 5) Scan any visible text for a wc: pattern
+    try:
+        text = await page.evaluate("() => document.body.innerText || ''")
+        m = WC_URI_RE.search(text or "")
+        if m:
+            return m.group(0)
+    except Exception:
+        pass
+
     return None
 
 
 async def main():
-    """Run venice.ai integration test."""
-    # Get project ID
+    """Run fully automated venice.ai test."""
     project_id = os.getenv("WALLETCONNECT_PROJECT_ID", "a01e2f3b4c5d6e7f8a9b0c1d2e3f4a5b")
     
-    print("=" * 60)
-    print("VENICE.AI INTEGRATION TEST")
-    print("=" * 60)
+    print("=" * 70)
+    print("VENICE.AI FULLY AUTOMATED INTEGRATION TEST")
+    print("=" * 70)
     
-    # Generate test Ethereum account
-    print("\n[1/6] Generating test Ethereum account...")
-    ethereum_account = generate_test_account()
-    wallet_address = ethereum_account["address"]
+    # Generate account
+    print("\n[1/8] Generating Ethereum account...")
+    account = generate_test_account()
+    wallet_address = account["address"]
     print(f"    Address: {wallet_address}")
-    print(f"    Private Key: {ethereum_account['private_key'][:20]}... (hidden)")
     
     # Initialize wallet
-    print("\n[2/6] Initializing WalletKit...")
+    print("\n[2/8] Initializing WalletKit...")
     storage = MemoryStorage()
     core = Core(project_id=project_id, storage=storage)
     await core.start()
     
     metadata: Metadata = {
-        "name": "Test Wallet for Venice.ai",
-        "description": "Test wallet for Venice.ai integration",
+        "name": "Test Wallet",
+        "description": "Automated test wallet",
         "url": "https://test.wallet",
         "icons": [],
     }
     
-    wallet = await WalletKit.init({
-        "core": core,
-        "metadata": metadata,
-    })
-    wallet._ethereum_account = ethereum_account
+    wallet = await WalletKit.init({"core": core, "metadata": metadata})
+    wallet._ethereum_account = account
     
-    session_established = asyncio.Event()
+    session_ready = asyncio.Event()
     session_topic = None
     
-    # Set up event handlers
-    async def on_session_proposal(event: dict) -> None:
+    # Event handlers
+    async def on_proposal(event: dict):
         nonlocal session_topic
         proposal_id = event.get("id")
         params = event.get("params", {})
         
-        print(f"\n[SESSION] Proposal received:")
-        print(f"    Proposal ID: {proposal_id}")
-        
-        proposer = params.get("proposer", {})
-        proposer_metadata = proposer.get("metadata", {})
-        print(f"    DApp: {proposer_metadata.get('name', 'Unknown')}")
+        print(f"\n[SESSION] Proposal received (ID: {proposal_id})")
         
         try:
             required_namespaces = params.get("requiredNamespaces", {})
             namespaces = {}
             
             if "eip155" in required_namespaces:
-                required_chains = required_namespaces["eip155"].get("chains", ["eip155:1"])
-                accounts = [f"{chain}:{wallet_address}" for chain in required_chains]
-                
+                chains = required_namespaces["eip155"].get("chains", ["eip155:1"])
+                accounts = [f"{chain}:{wallet_address}" for chain in chains]
                 namespaces["eip155"] = {
                     "accounts": accounts,
-                    "chains": required_chains,
-                    "methods": required_namespaces["eip155"].get("methods", [
-                        "eth_sendTransaction",
-                        "eth_sign",
-                        "personal_sign",
-                    ]),
-                    "events": required_namespaces["eip155"].get("events", [
-                        "chainChanged",
-                        "accountsChanged",
-                    ]),
+                    "chains": chains,
+                    "methods": required_namespaces["eip155"].get("methods", ["personal_sign", "eth_sign"]),
+                    "events": required_namespaces["eip155"].get("events", ["chainChanged", "accountsChanged"]),
                 }
             else:
                 namespaces["eip155"] = {
                     "accounts": [f"eip155:1:{wallet_address}"],
                     "chains": ["eip155:1"],
-                    "methods": ["eth_sendTransaction", "eth_sign", "personal_sign"],
+                    "methods": ["personal_sign", "eth_sign"],
                     "events": ["chainChanged", "accountsChanged"],
                 }
             
-            print(f"    Approving with address: {wallet_address}")
-            result = await wallet.approve_session(
-                id=proposal_id,
-                namespaces=namespaces,
-            )
+            result = await wallet.approve_session(id=proposal_id, namespaces=namespaces)
             session_topic = result.get("topic")
             print(f"    [OK] Session approved! Topic: {session_topic}")
-            session_established.set()
+            session_ready.set()
         except Exception as e:
-            print(f"    [ERROR] Failed to approve: {e}")
+            print(f"    [ERROR] Approval failed: {e}")
             import traceback
             traceback.print_exc()
-            session_established.set()
+            session_ready.set()
     
-    wallet.on("session_proposal", on_session_proposal)
-    
-    async def on_session_request(event: dict) -> None:
+    async def on_request(event: dict):
         topic = event.get("topic")
         request_id = event.get("id")
         params = event.get("params", {})
         request = params.get("request", {})
-        method = request.get("method", "unknown")
+        method = request.get("method")
         request_params = request.get("params", [])
         
-        print(f"\n[SIGN] Request received:")
-        print(f"    Method: {method}")
-        print(f"    Request ID: {request_id}")
+        print(f"\n[SIGN] Request: {method} (ID: {request_id})")
         
-        private_key = ethereum_account["private_key"]
-        
-        try:
-            if method == "personal_sign":
-                if len(request_params) < 2:
-                    raise ValueError("personal_sign requires [message, address]")
-                
-                message_hex = request_params[0]
-                requested_address = request_params[1]
-                
-                if message_hex.startswith("0x"):
-                    message_bytes = bytes.fromhex(message_hex[2:])
-                else:
-                    message_bytes = bytes.fromhex(message_hex)
-                
-                try:
-                    message = message_bytes.decode("utf-8")
-                except UnicodeDecodeError:
-                    message = message_hex
-                
-                print(f"    Message: {message[:50]}...")
-                print(f"    Requested address: {requested_address}")
-                
-                signature = sign_personal_message(private_key, message)
-                print(f"    [OK] Signature created: {signature[:30]}...")
-                
-                await wallet.respond_session_request(
-                    topic=topic,
-                    response={
-                        "id": request_id,
-                        "jsonrpc": "2.0",
-                        "result": signature,
-                    },
-                )
+        if method == "personal_sign" and len(request_params) >= 2:
+            message_hex = request_params[0]
+            if message_hex.startswith("0x"):
+                message_bytes = bytes.fromhex(message_hex[2:])
             else:
-                print(f"    [SKIP] Method {method} not handled")
-        except Exception as e:
-            print(f"    [ERROR] Failed to handle request: {e}")
-            import traceback
-            traceback.print_exc()
+                message_bytes = bytes.fromhex(message_hex)
+            
+            try:
+                message = message_bytes.decode("utf-8")
+            except:
+                message = message_hex
+            
+            print(f"    Message: {message[:50]}...")
+            
+            signature = sign_personal_message(account["private_key"], message)
+            print(f"    [OK] Signed: {signature[:30]}...")
+            
+            await wallet.respond_session_request(
+                topic=topic,
+                response={"id": request_id, "jsonrpc": "2.0", "result": signature},
+            )
+        else:
+            print(f"    [SKIP] Method {method} not handled")
     
-    wallet.on("session_request", on_session_request)
+    wallet.on("session_proposal", on_proposal)
+    wallet.on("session_request", on_request)
     
-    # Launch browser
-    print("\n[3/6] Launching browser...")
+    # Browser automation
+    print("\n[3/8] Launching browser...")
     async with async_playwright() as p:
-        browser = await p.chromium.launch(headless=False, slow_mo=500)
+        browser = await p.chromium.launch(headless=False)
+        # Allow clipboard-based extraction via "Copy link" in Web3Modal
+        context = await browser.new_context(permissions=["clipboard-read", "clipboard-write"])
+        page = await context.new_page()
+        
+        # Monitor network for WalletConnect URIs
+        captured_uris = []
+        
+        def capture_request(request):
+            url = request.url
+            post_data = request.post_data or ""
+            body = post_data
+            
+            # Check URL
+            if "walletconnect" in url.lower() or "relay.walletconnect.com" in url:
+                if body:
+                    matches = re.findall(r'wc:[a-zA-Z0-9]+@\d+\?[^\s"\'}]+', body)
+                    if matches:
+                        captured_uris.extend(matches)
+                        print(f"    [NETWORK] Found URI in request: {matches[0][:50]}...")
+            
+            # Check body for wc: URIs
+            if "wc:" in body:
+                matches = re.findall(r'wc:[a-zA-Z0-9]+@\d+\?[^\s"\'}]+', body)
+                if matches:
+                    captured_uris.extend(matches)
+                    print(f"    [NETWORK] Found URI in body: {matches[0][:50]}...")
+        
+        page.on("request", capture_request)
+        
+        # Monitor responses for URIs
+        def capture_response(response):
+            try:
+                url = response.url
+                if "walletconnect" in url.lower() or "relay.walletconnect.com" in url or "web3modal" in url.lower():
+                    # Try to get response body (may be async)
+                    pass
+            except:
+                pass
+        
+        page.on("response", capture_response)
+        
+        # Monitor WebSocket messages (where WalletConnect URIs are often sent)
+        def capture_websocket(ws):
+            def on_framereceived(event):
+                try:
+                    payload = event.get('payload', '') or str(event)
+                    if payload and "wc:" in str(payload):
+                        matches = re.findall(r'wc:[a-zA-Z0-9]+@\d+\?[^\s"\'}]+', str(payload))
+                        if matches:
+                            captured_uris.extend(matches)
+                            print(f"    [WEBSOCKET RX] Found URI: {matches[0][:50]}...")
+                except:
+                    pass
+            
+            def on_framesent(event):
+                try:
+                    payload = event.get('payload', '') or str(event)
+                    if payload and "wc:" in str(payload):
+                        matches = re.findall(r'wc:[a-zA-Z0-9]+@\d+\?[^\s"\'}]+', str(payload))
+                        if matches:
+                            captured_uris.extend(matches)
+                            print(f"    [WEBSOCKET TX] Found URI: {matches[0][:50]}...")
+                except:
+                    pass
+            
+            try:
+                ws.on("framereceived", on_framereceived)
+                ws.on("framesent", on_framesent)
+            except:
+                pass
+        
+        page.on("websocket", capture_websocket)
         
         try:
-            context = await browser.new_context()
-            page = await context.new_page()
+            print("\n[4/8] Navigating to sign-in page...")
+            await page.goto("https://venice.ai/sign-in", wait_until="domcontentloaded", timeout=60000)
+            await asyncio.sleep(3)
             
-            print("\n[4/6] Navigating to venice.ai...")
-            try:
-                await page.goto("https://venice.ai", wait_until="domcontentloaded", timeout=60000)
-            except Exception as e:
-                print(f"    [WARNING] Navigation issue: {e}")
-                print("    Continuing anyway...")
-                await asyncio.sleep(2)
+            print("\n[5/8] Clicking Web3 Wallet button...")
+            await page.wait_for_load_state("domcontentloaded", timeout=30000)
+            await page.get_by_role("button", name=re.compile(r"^\s*Web3 Wallet\s*$", re.I)).click(timeout=20000)
+            await page.get_by_text("Connect Wallet", exact=False).wait_for(timeout=20000)
+            await asyncio.sleep(1.0)
+            print("    [OK] Web3Modal opened")
             
-            print("\n[5/6] Looking for login button...")
-            try:
-                # Try multiple ways to find login
-                login_clicked = False
-                try:
-                    await page.click("text=Login / Sign Up", timeout=3000)
-                    login_clicked = True
-                    print("    Clicked 'Login / Sign Up'")
-                except:
-                    try:
-                        await page.click("a:has-text('Login')", timeout=3000)
-                        login_clicked = True
-                        print("    Clicked login link")
-                    except:
-                        try:
-                            await page.click("button:has-text('Login')", timeout=3000)
-                            login_clicked = True
-                            print("    Clicked login button")
-                        except:
-                            print("    Could not find login button - page might already be on login")
-                            login_clicked = True  # Assume we're there
-                
-                if login_clicked:
-                    await asyncio.sleep(2)  # Wait for page to load
-                    
-                    # Take screenshot for debugging
-                    await page.screenshot(path="venice_page.png")
-                    print("    Screenshot saved to venice_page.png")
-                    
-                    # Try to find WalletConnect elements with longer timeout
-                    print("    Looking for WalletConnect UI...")
-                    try:
-                        await page.wait_for_selector(
-                            "canvas, img[alt*='QR'], [data-wc], .walletconnect-modal, [class*='wallet'], [class*='connect']",
-                            timeout=15000,
-                            state="attached"
-                        )
-                        print("    Found WalletConnect element!")
-                    except:
-                        print("    WalletConnect UI not found with standard selectors")
-                        print("    Checking page content...")
-                        page_text = await page.inner_text("body")
-                        if "wallet" in page_text.lower() or "connect" in page_text.lower():
-                            print("    Page contains wallet/connect text - might be loading")
-                        else:
-                            print("    Page might not have WalletConnect yet")
-            except Exception as e:
-                print(f"    [WARNING] Login flow issue: {e}")
-                await page.screenshot(path="venice_error.png")
-                print("    Error screenshot saved to venice_error.png")
+            print("\n[7/8] Extracting WalletConnect URI...")
+            uri = None
             
-            print("\n[6/6] Extracting WalletConnect URI...")
-            print("    Trying multiple extraction methods...")
+            # Method 1: Check captured network URIs
+            if captured_uris:
+                uri = captured_uris[-1]  # Get most recent
+                print(f"    [OK] Found URI from network: {uri[:50]}...")
             
-            # Try extraction immediately
-            uri = await extract_walletconnect_uri(page, timeout=5.0)
+            # Method 2: Extract via shadow-DOM-aware locators + clipboard
+            if not uri:
+                for attempt in range(20):
+                    if captured_uris:
+                        uri = captured_uris[-1]
+                        break
+                    uri = await extract_wc_uri_from_web3modal(page)
+                    if uri:
+                        break
+                    if attempt % 3 == 0:
+                        print(f"    Attempt {attempt+1}/20: waiting...")
+                    await asyncio.sleep(1.0)
             
             if not uri:
-                print("    Waiting 5 seconds and trying again...")
-                await asyncio.sleep(5)
-                uri = await extract_walletconnect_uri(page, timeout=10.0)
-            
-            if not uri:
-                print("    Waiting 10 more seconds (WalletConnect might be loading)...")
-                await asyncio.sleep(10)
-                uri = await extract_walletconnect_uri(page, timeout=10.0)
-            
-            if not uri:
-                print("    [INFO] Could not automatically extract URI")
-                print("    This is normal - venice.ai might:")
-                print("    1. Require manual interaction")
-                print("    2. Use a different WalletConnect implementation")
-                print("    3. Load WalletConnect asynchronously")
-                print("\n    Browser window is open - you can:")
-                print("    1. Manually click through the login flow")
-                print("    2. Look for a QR code or WalletConnect URI")
-                print("    3. Copy any 'wc:' URI you see and we'll use it")
-                print("\n    Waiting 60 seconds for manual interaction...")
-                print("    (Or press Ctrl+C to stop)")
-                await asyncio.sleep(60)
-                
-                # Try one more time after waiting
-                uri = await extract_walletconnect_uri(page, timeout=5.0)
-            
-            if not uri:
-                print("\n    [SKIP] URI extraction failed")
-                print("    The test setup is working, but venice.ai's WalletConnect")
-                print("    implementation may require manual interaction or different handling")
+                print("    [ERROR] Could not extract URI")
+                await page.screenshot(path="venice_debug.png")
+                print("    Screenshot saved to venice_debug.png")
                 return
             
-            print(f"    [OK] Found URI: {uri[:50]}...")
-            
-            print("\n[PAIRING] Pairing wallet with URI...")
+            print(f"\n[8/8] Pairing with URI...")
+            print(f"    URI: {uri[:60]}...")
             await wallet.pair(uri)
             
-            print("\n[WAITING] Waiting for session establishment...")
+            print("\n[WAITING] Waiting for session...")
             try:
-                await asyncio.wait_for(session_established.wait(), timeout=30.0)
+                await asyncio.wait_for(session_ready.wait(), timeout=30.0)
+                if session_topic:
+                    print(f"    [SUCCESS] Session established! Topic: {session_topic}")
+                    print("\n[READY] Wallet ready. Waiting for signing requests...")
+                    await asyncio.sleep(20)  # Wait for venice.ai to send signing request
+                else:
+                    print("    [ERROR] Session topic not set")
             except asyncio.TimeoutError:
-                print("    [ERROR] Session establishment timeout")
-                return
-            
-            if session_topic:
-                print(f"    [OK] Session established! Topic: {session_topic}")
-                print("\n[READY] Wallet is ready. Waiting for signing requests...")
-                await asyncio.sleep(10)  # Wait for any requests
-            else:
-                print("    [ERROR] Session topic not set")
+                print("    [ERROR] Session timeout")
             
         finally:
-            print("\n[CLEANUP] Closing browser...")
             await browser.close()
     
     # Cleanup
     if hasattr(core, "relayer") and core.relayer:
         try:
             await core.relayer.disconnect()
-        except Exception:
+        except:
             pass
     
-    print("\n" + "=" * 60)
+    print("\n" + "=" * 70)
     print("TEST COMPLETE")
-    print("=" * 60)
+    print("=" * 70)
 
 
 if __name__ == "__main__":
     try:
         asyncio.run(main())
     except KeyboardInterrupt:
-        print("\n\n[INTERRUPTED] Test stopped by user")
+        print("\n[INTERRUPTED]")
     except Exception as e:
-        print(f"\n[ERROR] Test failed: {e}")
+        print(f"\n[ERROR] {e}")
         import traceback
         traceback.print_exc()
-
