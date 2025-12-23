@@ -6,10 +6,14 @@ from walletkit.controllers.engine import Engine
 from walletkit.core import Core
 from walletkit.types.client import IWalletKit, Metadata, Options, SignConfig
 from walletkit.utils.events import EventEmitter
+from walletkit.utils.notifications import Notifications
 
 
 class WalletKit(IWalletKit):
     """WalletKit client - main API for wallet integration."""
+    
+    # Static notifications utility
+    notifications = Notifications()
 
     def __init__(self, opts: Options) -> None:
         """Initialize WalletKit client.
@@ -25,6 +29,7 @@ class WalletKit(IWalletKit):
         self.logger = self.core.logger
         self.events = EventEmitter()
         self.engine = Engine(self)
+        self.notifications = Notifications()
         self._initialized = False
 
     @classmethod

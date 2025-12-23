@@ -2,6 +2,7 @@
 import json
 from typing import Any, Callable, Dict, Optional
 
+from walletkit.controllers.expirer import EXPIRER_EVENTS, parse_expirer_target
 from walletkit.controllers.proposal_store import ProposalStore
 from walletkit.controllers.request_store import RequestStore
 from walletkit.controllers.session_store import SessionStore
@@ -73,6 +74,9 @@ class SignClient:
             
             # Subscribe to relayer messages
             self._setup_relayer_listeners()
+            
+            # Register expirer events
+            self._register_expirer_events()
             
             # Initialize event client if available
             if hasattr(self.core, "event_client") and self.core.event_client:
@@ -156,6 +160,11 @@ class SignClient:
         }
         
         await self.proposal.set(proposal_id, proposal)
+        
+        # Register expiry with expirer (proposals expire in 5 minutes)
+        import time
+        proposal_expiry = int(time.time() * 1000) + (5 * 60 * 1000)
+        self.core.expirer.set(proposal_id, proposal_expiry)
         
         # Emit event
         self.events.emit("session_proposal", {
@@ -441,6 +450,9 @@ class SignClient:
         
         # Delete proposal
         await self.proposal.delete(proposal_id)
+        # Remove from expirer
+        if self.core.expirer.has(proposal_id):
+            self.core.expirer.delete(proposal_id)
 
     async def update(self, params: Dict[str, Any]) -> Dict[str, Any]:
         """Update session.
@@ -575,6 +587,9 @@ class SignClient:
         
         # Delete session
         await self.session.delete(topic)
+        # Remove from expirer
+        if self.core.expirer.has(topic):
+            self.core.expirer.delete(topic)
         # Delete pending requests for this topic
         await self.request_store.delete_by_topic(topic)
 
@@ -647,4 +662,37 @@ class SignClient:
         request = params.get("request", {})
         iss = params.get("iss", "")
         return f"WalletConnect Auth Message\nIss: {iss}\nRequest: {json.dumps(request)}"
+    
+    def _register_expirer_events(self) -> None:
+        """Register expirer event listeners."""
+        async def on_expired(event: Dict[str, Any]) -> None:
+            """Handle expiry events."""
+            target = event.get("target", "")
+            try:
+                parsed = parse_expirer_target(target)
+                target_type = parsed.get("type")
+                value = parsed.get("value")
+                
+                if target_type == "topic":
+                    # Session expired
+                    topic = value
+                    if topic and self.session.has(topic):
+                        await self.session.delete(topic)
+                        await self.request_store.delete_by_topic(topic)
+                        self.events.emit("session_delete", {
+                            "id": 0,
+                            "topic": topic,
+                        })
+                elif target_type == "id":
+                    # Proposal expired
+                    proposal_id = value
+                    if proposal_id and self.proposal.has(proposal_id):
+                        await self.proposal.delete(proposal_id)
+                        self.events.emit("proposal_expire", {
+                            "id": proposal_id,
+                        })
+            except Exception as e:
+                self.core.logger.error(f"Error handling expiry: {e}")
+        
+        self.core.expirer.on(EXPIRER_EVENTS["expired"], on_expired)
 
