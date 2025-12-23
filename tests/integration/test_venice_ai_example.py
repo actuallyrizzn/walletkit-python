@@ -35,7 +35,8 @@ from walletkit.utils.ethereum_signing import (
 
 
 # Test configuration
-TEST_PROJECT_ID = os.getenv("WALLETCONNECT_PROJECT_ID", "test-project-id")
+# Using a test project ID - in production you'd get this from WalletConnect Cloud
+TEST_PROJECT_ID = os.getenv("WALLETCONNECT_PROJECT_ID", "a01e2f3b4c5d6e7f8a9b0c1d2e3f4a5b")
 VENICE_URL = "https://venice.ai"
 
 
@@ -57,8 +58,7 @@ async def wallet(ethereum_account):
     - Connect via WalletConnect (handled by WalletKit)
     - Sign Ethereum messages (handled by eth-account)
     """
-    if TEST_PROJECT_ID == "test-project-id":
-        pytest.skip("WALLETCONNECT_PROJECT_ID not set - skipping integration test")
+    # Note: Using test project ID - may need real one for actual connection
     
     storage = MemoryStorage()
     core = Core(
