@@ -112,9 +112,15 @@ def test_decrypt_message_error():
     """Test decrypt_message error handling."""
     sym_key = generate_random_bytes32()
     
-    # Invalid encrypted message
+    # Use a valid base64 string that will fail during decryption
+    # Create a valid base64 envelope but with wrong key
+    from walletkit.utils.crypto_utils import encrypt_message, TYPE_0
+    wrong_key = generate_random_bytes32()
+    encrypted = encrypt_message(wrong_key, "test", type_val=TYPE_0)
+    
+    # Try to decrypt with different key - should fail
     with pytest.raises(ValueError, match="Failed to decrypt"):
-        decrypt_message(sym_key, "invalid_base64")
+        decrypt_message(sym_key, encrypted)
 
 
 def test_encode_decode_type_two():

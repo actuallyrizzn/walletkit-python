@@ -275,16 +275,32 @@ async def test_expirer_restore_with_existing_data(storage, logger):
     exp1.set("topic1", expiry)
     await asyncio.sleep(0.2)  # Wait for persistence
     
+    await exp1.cleanup()
+    
     # Try to restore when data already exists - need to manually set expirations
-    # to simulate the condition
+    # to simulate the condition where expirations exist before restore
     exp2 = Expirer(storage, logger)
-    # Manually set an expiration before init to trigger the error
+    
+    # Verify storage key matches
+    assert exp2.storage_key == exp1.storage_key
+    
+    # Manually set an expiration before calling _restore to trigger the error
     exp2.expirations["topic:test"] = Expiration("topic:test", expiry)
     
-    with pytest.raises(RuntimeError, match="Restore would override existing data"):
-        await exp2.init()
+    # Verify expirations dict is not empty
+    assert len(exp2.expirations) > 0
+    assert bool(exp2.expirations) is True
     
-    await exp1.cleanup()
+    # Storage should have persisted data from exp1
+    persisted = await storage.get_item(exp2.storage_key)
+    assert persisted is not None
+    assert len(persisted) > 0
+    assert isinstance(persisted, list)
+    
+    # Now call _restore directly - it should detect existing expirations
+    # and raise RuntimeError because persisted data exists AND expirations exist
+    with pytest.raises(RuntimeError, match="Restore would override existing data"):
+        await exp2._restore()
 
 
 @pytest.mark.asyncio

@@ -1,5 +1,8 @@
 """Tests for SignClient."""
+import asyncio
+
 import pytest
+from unittest.mock import AsyncMock
 
 from walletkit.controllers.sign_client import SignClient
 from walletkit.core import Core
@@ -1034,10 +1037,16 @@ async def test_sign_client_handle_protocol_message_wc_sessionEvent(sign_client):
 @pytest.mark.asyncio
 async def test_sign_client_acknowledged_callback(sign_client):
     """Test acknowledged callback in approve."""
-    # Create a proposal
+    # Mock relayer to avoid actual network calls
+    sign_client.core.relayer.publish = AsyncMock()
+    sign_client.core.relayer.connect = AsyncMock()
+    
+    # Create a proposal with topic
     proposal_id = 1
+    topic = "test_topic"
     proposal = {
         "id": proposal_id,
+        "topic": topic,
         "params": {
             "requiredNamespaces": {
                 "eip155": {"chains": ["1"], "methods": [], "events": []}
@@ -1045,6 +1054,11 @@ async def test_sign_client_acknowledged_callback(sign_client):
         },
     }
     await sign_client.proposal.set(proposal_id, proposal)
+    
+    # Set up sym key for the topic
+    from walletkit.utils.crypto_utils import generate_random_bytes32
+    sym_key = generate_random_bytes32()
+    await sign_client.core.crypto.set_sym_key(sym_key, override_topic=topic)
     
     # Approve session
     result = await sign_client.approve({
@@ -1067,8 +1081,16 @@ async def test_sign_client_acknowledged_callback(sign_client):
 @pytest.mark.asyncio
 async def test_sign_client_update_acknowledged_callback(sign_client):
     """Test acknowledged callback in update."""
-    # Create a session first
+    # Mock relayer to avoid actual network calls
+    sign_client.core.relayer.publish = AsyncMock()
+    sign_client.core.relayer.connect = AsyncMock()
+    
+    # Create a session first with sym key
     topic = "test_topic"
+    from walletkit.utils.crypto_utils import generate_random_bytes32
+    sym_key = generate_random_bytes32()
+    await sign_client.core.crypto.set_sym_key(sym_key, override_topic=topic)
+    
     session = {
         "topic": topic,
         "namespaces": {

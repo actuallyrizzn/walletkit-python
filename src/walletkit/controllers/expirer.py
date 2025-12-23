@@ -386,6 +386,9 @@ class Expirer:
             
             self._cached = persisted
             self.logger.debug(f"Successfully restored {len(persisted)} expirations")
+        except RuntimeError:
+            # Re-raise restore override errors
+            raise
         except Exception as e:
             self.logger.debug(f"Failed to restore {self.name}")
             self.logger.error(str(e))
