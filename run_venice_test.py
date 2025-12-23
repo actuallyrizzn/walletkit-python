@@ -3,6 +3,7 @@ import asyncio
 import os
 import sys
 import re
+from urllib.parse import urlparse, parse_qs
 from walletkit import WalletKit, Core
 from walletkit.types.client import Metadata
 from walletkit.utils.storage import MemoryStorage
@@ -88,7 +89,8 @@ async def extract_wc_uri_from_web3modal(page) -> str | None:
 
 async def main():
     """Run fully automated venice.ai test."""
-    project_id = os.getenv("WALLETCONNECT_PROJECT_ID", "a01e2f3b4c5d6e7f8a9b0c1d2e3f4a5b")
+    project_id = os.getenv("WALLETCONNECT_PROJECT_ID")  # prefer user's project id if set
+    relay_origin = os.getenv("WALLETCONNECT_ORIGIN")
     
     print("=" * 70)
     print("VENICE.AI FULLY AUTOMATED INTEGRATION TEST")
@@ -99,104 +101,9 @@ async def main():
     account = generate_test_account()
     wallet_address = account["address"]
     print(f"    Address: {wallet_address}")
-    
-    # Initialize wallet
-    print("\n[2/8] Initializing WalletKit...")
-    storage = MemoryStorage()
-    core = Core(project_id=project_id, storage=storage)
-    await core.start()
-    
-    metadata: Metadata = {
-        "name": "Test Wallet",
-        "description": "Automated test wallet",
-        "url": "https://test.wallet",
-        "icons": [],
-    }
-    
-    wallet = await WalletKit.init({"core": core, "metadata": metadata})
-    wallet._ethereum_account = account
-    
-    session_ready = asyncio.Event()
-    session_topic = None
-    
-    # Event handlers
-    async def on_proposal(event: dict):
-        nonlocal session_topic
-        proposal_id = event.get("id")
-        params = event.get("params", {})
-        
-        print(f"\n[SESSION] Proposal received (ID: {proposal_id})")
-        
-        try:
-            required_namespaces = params.get("requiredNamespaces", {})
-            namespaces = {}
-            
-            if "eip155" in required_namespaces:
-                chains = required_namespaces["eip155"].get("chains", ["eip155:1"])
-                accounts = [f"{chain}:{wallet_address}" for chain in chains]
-                namespaces["eip155"] = {
-                    "accounts": accounts,
-                    "chains": chains,
-                    "methods": required_namespaces["eip155"].get("methods", ["personal_sign", "eth_sign"]),
-                    "events": required_namespaces["eip155"].get("events", ["chainChanged", "accountsChanged"]),
-                }
-            else:
-                namespaces["eip155"] = {
-                    "accounts": [f"eip155:1:{wallet_address}"],
-                    "chains": ["eip155:1"],
-                    "methods": ["personal_sign", "eth_sign"],
-                    "events": ["chainChanged", "accountsChanged"],
-                }
-            
-            result = await wallet.approve_session(id=proposal_id, namespaces=namespaces)
-            session_topic = result.get("topic")
-            print(f"    [OK] Session approved! Topic: {session_topic}")
-            session_ready.set()
-        except Exception as e:
-            print(f"    [ERROR] Approval failed: {e}")
-            import traceback
-            traceback.print_exc()
-            session_ready.set()
-    
-    async def on_request(event: dict):
-        topic = event.get("topic")
-        request_id = event.get("id")
-        params = event.get("params", {})
-        request = params.get("request", {})
-        method = request.get("method")
-        request_params = request.get("params", [])
-        
-        print(f"\n[SIGN] Request: {method} (ID: {request_id})")
-        
-        if method == "personal_sign" and len(request_params) >= 2:
-            message_hex = request_params[0]
-            if message_hex.startswith("0x"):
-                message_bytes = bytes.fromhex(message_hex[2:])
-            else:
-                message_bytes = bytes.fromhex(message_hex)
-            
-            try:
-                message = message_bytes.decode("utf-8")
-            except:
-                message = message_hex
-            
-            print(f"    Message: {message[:50]}...")
-            
-            signature = sign_personal_message(account["private_key"], message)
-            print(f"    [OK] Signed: {signature[:30]}...")
-            
-            await wallet.respond_session_request(
-                topic=topic,
-                response={"id": request_id, "jsonrpc": "2.0", "result": signature},
-            )
-        else:
-            print(f"    [SKIP] Method {method} not handled")
-    
-    wallet.on("session_proposal", on_proposal)
-    wallet.on("session_request", on_request)
-    
-    # Browser automation
-    print("\n[3/8] Launching browser...")
+
+    # Browser automation + auto-detect Venice's projectId if user didn't provide one
+    print("\n[2/8] Launching browser...")
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=False)
         # Allow clipboard-based extraction via "Copy link" in Web3Modal
@@ -205,11 +112,24 @@ async def main():
         
         # Monitor network for WalletConnect URIs
         captured_uris = []
+        detected_project_id: str | None = None
         
         def capture_request(request):
             url = request.url
             post_data = request.post_data or ""
             body = post_data
+
+            nonlocal detected_project_id
+            if detected_project_id is None and "api.web3modal.org" in url and "projectId=" in url:
+                try:
+                    parsed = urlparse(url)
+                    qs = parse_qs(parsed.query or "")
+                    pid = (qs.get("projectId") or [None])[0]
+                    if pid and isinstance(pid, str) and len(pid) >= 8:
+                        detected_project_id = pid
+                        print(f"    [DETECTED] Venice Web3Modal projectId: {detected_project_id}")
+                except Exception:
+                    pass
             
             # Check URL
             if "walletconnect" in url.lower() or "relay.walletconnect.com" in url:
@@ -273,9 +193,126 @@ async def main():
         page.on("websocket", capture_websocket)
         
         try:
-            print("\n[4/8] Navigating to sign-in page...")
+            print("\n[3/8] Navigating to sign-in page...")
             await page.goto("https://venice.ai/sign-in", wait_until="domcontentloaded", timeout=60000)
             await asyncio.sleep(3)
+
+            # If user didn't set a project id, use Venice's detected id (from api.web3modal.org requests)
+            if not project_id:
+                # Wait a moment for the config request to fire
+                for _ in range(30):
+                    if detected_project_id:
+                        break
+                    await asyncio.sleep(0.2)
+                project_id = detected_project_id
+                # When piggybacking Venice's projectId, use Venice as the websocket Origin by default.
+                # (WalletConnect Cloud often enforces allowlisted origins per project.)
+                if not relay_origin:
+                    relay_origin = "https://venice.ai"
+
+            if not project_id:
+                print("    [ERROR] Could not detect Web3Modal projectId and WALLETCONNECT_PROJECT_ID is not set.")
+                await page.screenshot(path="venice_no_project_id.png")
+                return
+            else:
+                print(f"    [OK] Using WalletConnect projectId: {project_id}")
+                if relay_origin:
+                    print(f"    [OK] Using relay Origin: {relay_origin}")
+
+            # Initialize wallet (after projectId is known)
+            print("\n[4/8] Initializing WalletKit...")
+            storage = MemoryStorage()
+            core = Core(project_id=project_id, storage=storage, relay_origin=relay_origin)
+            await core.start()
+
+            metadata: Metadata = {
+                "name": "Test Wallet",
+                "description": "Automated test wallet",
+                "url": "https://test.wallet",
+                "icons": [],
+            }
+
+            wallet = await WalletKit.init({"core": core, "metadata": metadata})
+            wallet._ethereum_account = account
+
+            session_ready = asyncio.Event()
+            session_topic = None
+
+            # Event handlers
+            async def on_proposal(event: dict):
+                nonlocal session_topic
+                proposal_id = event.get("id")
+                params = event.get("params", {})
+
+                print(f"\n[SESSION] Proposal received (ID: {proposal_id})")
+
+                try:
+                    required_namespaces = params.get("requiredNamespaces", {})
+                    namespaces = {}
+
+                    if "eip155" in required_namespaces:
+                        chains = required_namespaces["eip155"].get("chains", ["eip155:1"])
+                        accounts = [f"{chain}:{wallet_address}" for chain in chains]
+                        namespaces["eip155"] = {
+                            "accounts": accounts,
+                            "chains": chains,
+                            "methods": required_namespaces["eip155"].get("methods", ["personal_sign", "eth_sign"]),
+                            "events": required_namespaces["eip155"].get("events", ["chainChanged", "accountsChanged"]),
+                        }
+                    else:
+                        namespaces["eip155"] = {
+                            "accounts": [f"eip155:1:{wallet_address}"],
+                            "chains": ["eip155:1"],
+                            "methods": ["personal_sign", "eth_sign"],
+                            "events": ["chainChanged", "accountsChanged"],
+                        }
+
+                    result = await wallet.approve_session(id=proposal_id, namespaces=namespaces)
+                    session_topic = result.get("topic")
+                    print(f"    [OK] Session approved! Topic: {session_topic}")
+                    session_ready.set()
+                except Exception as e:
+                    print(f"    [ERROR] Approval failed: {e}")
+                    import traceback
+                    traceback.print_exc()
+                    session_ready.set()
+
+            async def on_request(event: dict):
+                topic = event.get("topic")
+                request_id = event.get("id")
+                params = event.get("params", {})
+                request = params.get("request", {})
+                method = request.get("method")
+                request_params = request.get("params", [])
+
+                print(f"\n[SIGN] Request: {method} (ID: {request_id})")
+
+                if method == "personal_sign" and len(request_params) >= 2:
+                    message_hex = request_params[0]
+                    if message_hex.startswith("0x"):
+                        message_bytes = bytes.fromhex(message_hex[2:])
+                    else:
+                        message_bytes = bytes.fromhex(message_hex)
+
+                    try:
+                        message = message_bytes.decode("utf-8")
+                    except Exception:
+                        message = message_hex
+
+                    print(f"    Message: {message[:50]}...")
+
+                    signature = sign_personal_message(account["private_key"], message)
+                    print(f"    [OK] Signed: {signature[:30]}...")
+
+                    await wallet.respond_session_request(
+                        topic=topic,
+                        response={"id": request_id, "jsonrpc": "2.0", "result": signature},
+                    )
+                else:
+                    print(f"    [SKIP] Method {method} not handled")
+
+            wallet.on("session_proposal", on_proposal)
+            wallet.on("session_request", on_request)
             
             print("\n[5/8] Clicking Web3 Wallet button...")
             await page.wait_for_load_state("domcontentloaded", timeout=30000)
@@ -329,13 +366,12 @@ async def main():
             
         finally:
             await browser.close()
-    
-    # Cleanup
-    if hasattr(core, "relayer") and core.relayer:
-        try:
-            await core.relayer.disconnect()
-        except:
-            pass
+            # Cleanup
+            try:
+                if "core" in locals() and hasattr(core, "relayer") and core.relayer:
+                    await core.relayer.disconnect()
+            except Exception:
+                pass
     
     print("\n" + "=" * 70)
     print("TEST COMPLETE")

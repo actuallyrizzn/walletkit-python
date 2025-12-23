@@ -19,6 +19,7 @@ class Relayer:
         logger: Any,  # Logger
         relay_url: Optional[str] = None,
         project_id: Optional[str] = None,
+        origin: Optional[str] = None,
     ) -> None:
         """Initialize Relayer.
         
@@ -27,11 +28,13 @@ class Relayer:
             logger: Logger instance
             relay_url: Relay server URL
             project_id: WalletConnect project ID
+            origin: Optional WebSocket Origin header value for relay handshake
         """
         self.core = core
         self.logger = logger
         self.relay_url = relay_url or "wss://relay.walletconnect.com"
         self.project_id = project_id
+        self.origin = origin
         
         self.protocol = "wc"
         self.version = 2
@@ -111,7 +114,7 @@ class Relayer:
         # Add timeout to connection
         try:
             self._websocket = await asyncio.wait_for(
-                websockets.connect(url),
+                websockets.connect(url, origin=self.origin) if self.origin else websockets.connect(url),
                 timeout=10.0,  # 10 second connection timeout
             )
         except asyncio.TimeoutError:

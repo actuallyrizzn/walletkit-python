@@ -17,6 +17,7 @@ class Core:
         self,
         project_id: Optional[str] = None,
         relay_url: Optional[str] = None,
+        relay_origin: Optional[str] = None,
         storage: Optional[IKeyValueStorage] = None,
         logger: Any = None,  # Logger
         storage_prefix: str = "wc@2:core:",
@@ -26,6 +27,7 @@ class Core:
         Args:
             project_id: WalletConnect project ID
             relay_url: Relay server URL
+            relay_origin: Optional Origin header value to send during WebSocket handshake
             storage: Storage backend (defaults to MemoryStorage)
             logger: Logger instance
             storage_prefix: Storage key prefix
@@ -34,6 +36,7 @@ class Core:
         self.version = 2
         self.project_id = project_id
         self.relay_url = relay_url or "wss://relay.walletconnect.com"
+        self.relay_origin = relay_origin
         self.storage = storage or MemoryStorage()
         self.logger = logger or self._create_default_logger()
         self.storage_prefix = storage_prefix
@@ -45,7 +48,13 @@ class Core:
         from walletkit.controllers.relayer import Relayer
         from walletkit.controllers.pairing import Pairing
         
-        self.relayer = Relayer(self, self.logger, relay_url=self.relay_url, project_id=self.project_id)
+        self.relayer = Relayer(
+            self,
+            self.logger,
+            relay_url=self.relay_url,
+            project_id=self.project_id,
+            origin=self.relay_origin,
+        )
         self.expirer = Expirer(self.storage, self.logger, storage_prefix=storage_prefix)
         self.event_client = EventClient(self.storage, self.logger, telemetry_enabled=False, storage_prefix=storage_prefix)
         self.echo_client = EchoClient(self.storage, self.logger, storage_prefix=storage_prefix)
