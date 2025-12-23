@@ -90,7 +90,7 @@ class Expiration:
         
         Args:
             target: Formatted target string
-            expiry: Expiry timestamp in milliseconds
+            expiry: Expiry timestamp in seconds (unix epoch)
         """
         self.target = target
         self.expiry = expiry
@@ -202,7 +202,7 @@ class Expirer:
         
         Args:
             key: Topic string or numeric ID
-            expiry: Expiry timestamp in milliseconds
+            expiry: Expiry timestamp in seconds (unix epoch)
         """
         self._check_initialized()
         target = format_target(key)
@@ -317,8 +317,8 @@ class Expirer:
             target: Target string
             expiration: Expiration object
         """
-        now_ms = int(time.time() * 1000)
-        if expiration.expiry <= now_ms:
+        now_s = int(time.time())
+        if expiration.expiry <= now_s:
             self._expire(target, expiration)
 
     def _expire(self, target: str, expiration: Expiration) -> None:

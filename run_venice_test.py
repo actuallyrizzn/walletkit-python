@@ -3,6 +3,9 @@ import asyncio
 import os
 import sys
 import re
+import json
+import urllib.request
+import urllib.error
 from urllib.parse import urlparse, parse_qs
 from walletkit import WalletKit, Core
 from walletkit.types.client import Metadata
@@ -19,6 +22,35 @@ except ImportError:
     sys.exit(1)
 
 WC_URI_RE = re.compile(r"wc:[a-zA-Z0-9]+@\d+\?[^\s\"']+")
+
+
+def _rpc_call(url: str, method: str, params: list | None = None, timeout_s: float = 8.0) -> dict:
+    """Minimal JSON-RPC POST (stdlib-only) for preflight network checks."""
+    payload = {"jsonrpc": "2.0", "id": 1, "method": method, "params": params or []}
+    data = json.dumps(payload).encode("utf-8")
+    req = urllib.request.Request(
+        url,
+        data=data,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    with urllib.request.urlopen(req, timeout=timeout_s) as resp:
+        raw = resp.read().decode("utf-8", errors="replace")
+    out = json.loads(raw)
+    if isinstance(out, dict) and "error" in out:
+        raise RuntimeError(str(out["error"]))
+    return out
+
+
+def _check_rpc(url: str, expected_chain_id: int, label: str) -> None:
+    """Preflight: ensure we can reach an RPC node and it reports the expected chainId."""
+    out = _rpc_call(url, "eth_chainId", [], timeout_s=8.0)
+    chain_hex = out.get("result")
+    if not isinstance(chain_hex, str) or not chain_hex.startswith("0x"):
+        raise RuntimeError(f"{label} RPC returned unexpected eth_chainId: {chain_hex!r}")
+    chain_id = int(chain_hex, 16)
+    if chain_id != expected_chain_id:
+        raise RuntimeError(f"{label} RPC chainId mismatch: got {chain_id}, expected {expected_chain_id}")
 
 
 async def _try_get_clipboard_text(page) -> str:
@@ -92,10 +124,33 @@ async def main():
     os.environ.setdefault("WALLETKIT_WC_DEBUG", "1")
     project_id = os.getenv("WALLETCONNECT_PROJECT_ID")  # prefer user's project id if set
     relay_origin = os.getenv("WALLETCONNECT_ORIGIN")
+
+    # Network / chain configuration
+    # Some public RPCs (e.g. Cloudflare) may 403 depending on headers/region.
+    # Defaults here are “usually-open” endpoints; override via env if needed.
+    mainnet_rpc = os.getenv("ETH_RPC_URL_MAINNET", "https://ethereum.publicnode.com")
+    base_rpc = os.getenv("ETH_RPC_URL_BASE", "https://base.publicnode.com")
+    # Venice is a Base app; keep both mainnet + base available in namespaces.
+    desired_chains = ["eip155:1", "eip155:8453"]
+    signing_wait_s = float(os.getenv("VENICE_SIGNING_WAIT_SECS", "30"))
     
     print("=" * 70)
     print("VENICE.AI FULLY AUTOMATED INTEGRATION TEST")
     print("=" * 70)
+
+    print("\n[0/8] Checking RPC connectivity (Mainnet + Base)...")
+    try:
+        _check_rpc(mainnet_rpc, 1, "Mainnet")
+        print(f"    [OK] Mainnet RPC reachable: {mainnet_rpc}")
+    except Exception as e:
+        print(f"    [ERROR] Mainnet RPC check failed: {e} (url={mainnet_rpc})")
+        return
+    try:
+        _check_rpc(base_rpc, 8453, "Base")
+        print(f"    [OK] Base RPC reachable: {base_rpc}")
+    except Exception as e:
+        print(f"    [ERROR] Base RPC check failed: {e} (url={base_rpc})")
+        return
     
     # Generate account
     print("\n[1/8] Generating Ethereum account...")
@@ -117,7 +172,10 @@ async def main():
         
         def capture_request(request):
             url = request.url
-            post_data = request.post_data or ""
+            try:
+                post_data = request.post_data or ""
+            except Exception:
+                post_data = ""
             body = post_data
 
             nonlocal detected_project_id
@@ -254,6 +312,12 @@ async def main():
 
                     if "eip155" in required_namespaces:
                         chains = required_namespaces["eip155"].get("chains", ["eip155:1"])
+                        # Approve at minimum mainnet + base, while ensuring we satisfy required chains.
+                        merged = []
+                        for c in list(chains) + desired_chains:
+                            if isinstance(c, str) and c not in merged:
+                                merged.append(c)
+                        chains = merged
                         accounts = [f"{chain}:{wallet_address}" for chain in chains]
                         namespaces["eip155"] = {
                             "accounts": accounts,
@@ -263,8 +327,8 @@ async def main():
                         }
                     else:
                         namespaces["eip155"] = {
-                            "accounts": [f"eip155:1:{wallet_address}"],
-                            "chains": ["eip155:1"],
+                            "accounts": [f"{c}:{wallet_address}" for c in desired_chains],
+                            "chains": desired_chains,
                             "methods": ["personal_sign", "eth_sign"],
                             "events": ["chainChanged", "accountsChanged"],
                         }
@@ -342,57 +406,52 @@ async def main():
                 if not isinstance(payload_params, dict):
                     payload_params = {}
 
-                # Determine chain id for did:pkh
-                chain_id = None
-                # Common fields
-                if isinstance(params, dict):
-                    chain_id = params.get("chainId") or params.get("chain") or chain_id
-                if not chain_id:
+                try:
+                    # JS reference generates one CACAO per requested chain.
                     chains = payload_params.get("chains") or []
-                    if isinstance(chains, list) and chains:
-                        chain_id = chains[0]
-                if isinstance(chain_id, str) and chain_id.startswith("eip155:"):
-                    chain_id_num = chain_id.split(":")[1]
-                else:
-                    chain_id_num = str(chain_id or "1")
+                    if not isinstance(chains, list) or not chains:
+                        chains = ["eip155:1"]
 
-                iss = f"did:pkh:eip155:{chain_id_num}:{wallet_address}"
+                    # Ensure required fields exist
+                    payload_params.setdefault("version", "1")
 
-                # Ensure required fields exist
-                payload_params.setdefault("version", "1")
+                    auths: list[dict] = []
+                    for chain in chains:
+                        if not isinstance(chain, str):
+                            continue
+                        iss_raw = f"{chain}:{wallet_address}"  # matches JS: `${chain}:${address}`
 
-                try:
-                    message = wallet.format_auth_message(payload_params, iss)
-                except Exception as e:
-                    print(f"    [AUTH][ERROR] format_auth_message failed: {e}")
-                    return
+                        message = wallet.format_auth_message(payload_params, iss_raw)
+                        sig = sign_personal_message(account["private_key"], message)
 
-                signature = sign_personal_message(account["private_key"], message)
+                        # Mirror @walletconnect/utils buildAuthObject:
+                        # - h.t = "caip122"
+                        # - p.iss is did:pkh-prefixed
+                        # - s.t = "eip191"
+                        cacao = {
+                            "h": {"t": "caip122"},
+                            "p": {
+                                "iss": f"did:pkh:{iss_raw}",
+                                "domain": payload_params.get("domain"),
+                                "aud": payload_params.get("aud"),
+                                "version": payload_params.get("version"),
+                                "nonce": payload_params.get("nonce"),
+                                "iat": payload_params.get("iat"),
+                                "statement": payload_params.get("statement"),
+                                "requestId": payload_params.get("requestId"),
+                                "resources": payload_params.get("resources"),
+                                "nbf": payload_params.get("nbf"),
+                                "exp": payload_params.get("exp"),
+                            },
+                            "s": {"t": "eip191", "s": sig},
+                        }
+                        cacao["p"] = {k: v for k, v in cacao["p"].items() if v is not None}
+                        auths.append(cacao)
 
-                # Build CACAO auth object (minimal, matching @walletconnect/utils buildAuthObject)
-                cacao = {
-                    "h": {"t": "caip122"},
-                    "p": {
-                        "iss": iss,
-                        "domain": payload_params.get("domain"),
-                        "aud": payload_params.get("aud"),
-                        "version": payload_params.get("version"),
-                        "nonce": payload_params.get("nonce"),
-                        "iat": payload_params.get("iat"),
-                        "statement": payload_params.get("statement"),
-                        "requestId": payload_params.get("requestId"),
-                        "resources": payload_params.get("resources"),
-                        "nbf": payload_params.get("nbf"),
-                        "exp": payload_params.get("exp"),
-                    },
-                    "s": {"t": "eip191", "s": signature},
-                }
+                    if not auths:
+                        raise ValueError("No auths generated")
 
-                # Drop None values in payload to avoid schema issues
-                cacao["p"] = {k: v for k, v in cacao["p"].items() if v is not None}
-
-                try:
-                    await wallet.approve_session_authenticate({"id": auth_id, "auths": [cacao]})
+                    await wallet.approve_session_authenticate({"id": auth_id, "auths": auths})
                     print("    [AUTH][OK] Sent wc_sessionAuthenticateApprove")
                 except Exception as e:
                     print(f"    [AUTH][ERROR] approve_session_authenticate failed: {e}")
@@ -454,10 +513,10 @@ async def main():
                     # proceed once the modal observes the connection and advances the flow.
 
                     try:
-                        await asyncio.wait_for(signing_request_seen.wait(), timeout=120.0)
+                        await asyncio.wait_for(signing_request_seen.wait(), timeout=signing_wait_s)
                         print("    [SUCCESS] Saw at least one signing request.")
                     except asyncio.TimeoutError:
-                        print("    [WARNING] No signing request observed within 120s (Venice may require extra UI steps).")
+                        print(f"    [WARNING] No signing request observed within {signing_wait_s:.0f}s.")
                     try:
                         await page.screenshot(path="venice_after_wait.png", full_page=True)
                         print("    [DEBUG] Screenshot saved: venice_after_wait.png")

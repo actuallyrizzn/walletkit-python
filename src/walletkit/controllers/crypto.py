@@ -219,8 +219,11 @@ class Crypto:
             peer_public_key = opts.get("receiverPublicKey")
             if not self_public_key or not peer_public_key:
                 raise ValueError("Type 1 envelope requires sender and receiver public keys")
-            # Generate shared key and update topic
-            topic = await self.generate_shared_key(self_public_key, peer_public_key)
+            # Generate shared key and store it under the provided topic (WalletConnect uses
+            # an explicit "responseTopic" derived from the receiver public key hash).
+            topic = await self.generate_shared_key(
+                self_public_key, peer_public_key, override_topic=topic
+            )
         
         # Get symmetric key for topic
         sym_key = self._get_sym_key(topic)
@@ -271,8 +274,10 @@ class Crypto:
             receiver_public_key = opts.get("receiverPublicKey")
             if not sender_public_key or not receiver_public_key:
                 raise ValueError("Type 1 envelope requires sender and receiver public keys")
-            # Generate shared key and update topic
-            topic = await self.generate_shared_key(receiver_public_key, sender_public_key)
+            # Generate shared key and store it under the provided topic (responseTopic).
+            topic = await self.generate_shared_key(
+                receiver_public_key, sender_public_key, override_topic=topic
+            )
         
         try:
             sym_key = self._get_sym_key(topic)

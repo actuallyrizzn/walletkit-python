@@ -7,8 +7,9 @@ from walletkit.controllers.expirer import EXPIRER_EVENTS, parse_expirer_target
 from walletkit.controllers.proposal_store import ProposalStore
 from walletkit.controllers.request_store import RequestStore
 from walletkit.controllers.session_store import SessionStore
+from walletkit.utils.crypto_utils import hash_key
 from walletkit.utils.events import EventEmitter
-from walletkit.utils.jsonrpc import format_jsonrpc_error, format_jsonrpc_result
+from walletkit.utils.jsonrpc import format_jsonrpc_error, format_jsonrpc_result, get_big_int_rpc_id
 
 
 class SignClient:
@@ -101,6 +102,12 @@ class SignClient:
                 return
             
             try:
+                if os.getenv("WALLETKIT_WC_DEBUG") == "1":
+                    try:
+                        pt = self.core.crypto.get_payload_type(message)
+                        self.core.logger.debug(f"[WC_DEBUG] envelope type={pt} topic={topic}")
+                    except Exception:
+                        pass
                 # Decode message
                 payload = await self.core.crypto.decode(topic, message)
 
@@ -176,7 +183,7 @@ class SignClient:
         
         # Register expiry with expirer (proposals expire in 5 minutes)
         import time
-        proposal_expiry = int(time.time() * 1000) + (5 * 60 * 1000)
+        proposal_expiry = int(time.time()) + (5 * 60)
         self.core.expirer.set(proposal_id, proposal_expiry)
         
         # Emit event
@@ -347,6 +354,12 @@ class SignClient:
                 ap = params.get("authPayload") if isinstance(params, dict) else None
                 if isinstance(ap, dict):
                     self.core.logger.debug(f"[WC_DEBUG] authPayload keys={list(ap.keys())}")
+                requester = params.get("requester") if isinstance(params, dict) else None
+                if isinstance(requester, dict):
+                    rpk = str(requester.get("publicKey") or "")
+                    self.core.logger.debug(
+                        f"[WC_DEBUG] requester.publicKey len={len(rpk)} prefix={rpk[:10]}"
+                    )
             except Exception:
                 pass
         
@@ -390,6 +403,12 @@ class SignClient:
         proposer_public_key = proposer.get("publicKey")
         if not proposer_public_key:
             raise ValueError("Proposal proposer publicKey not found")
+        if os.getenv("WALLETKIT_WC_DEBUG") == "1":
+            try:
+                pk = str(proposer_public_key)
+                self.core.logger.debug(f"[WC_DEBUG] proposer.publicKey len={len(pk)} prefix={pk[:10]}")
+            except Exception:
+                pass
 
         # Generate responder key pair + derive new session topic
         responder_public_key = await self.core.crypto.generate_key_pair()
@@ -404,9 +423,9 @@ class SignClient:
         scoped_properties = params.get("scopedProperties")
         session_config = params.get("sessionConfig")
         
-        # Calculate expiry (7 days default)
+        # WalletConnect uses seconds-based expiries (see @walletconnect/utils calcExpiry)
         import time
-        expiry = int(time.time() * 1000) + (7 * 24 * 60 * 60 * 1000)
+        expiry = int(time.time()) + (7 * 24 * 60 * 60)
         
         session = {
             "topic": session_topic,
@@ -420,12 +439,19 @@ class SignClient:
             "optionalNamespaces": proposal.get("params", {}).get("optionalNamespaces", {}),
         }
         
-        # Send approval message
+        # Send approval flow:
+        # - JSON-RPC result on pairing topic (wc_sessionPropose response)
+        # - wc_sessionSettle request on derived session topic
         await self._send_session_approval(
             pairing_topic=pairing_topic,
+            session_topic=session_topic,
             responder_public_key=responder_public_key,
             namespaces=namespaces,
             proposal_id=proposal_id,
+            expiry=expiry,
+            session_properties=session_properties,
+            scoped_properties=scoped_properties,
+            session_config=session_config,
         )
         
         # Store acknowledgment callback
@@ -448,9 +474,14 @@ class SignClient:
     async def _send_session_approval(
         self,
         pairing_topic: str,
+        session_topic: str,
         responder_public_key: str,
         namespaces: Dict[str, Any],
         proposal_id: int,
+        expiry: int,
+        session_properties: Any = None,
+        scoped_properties: Any = None,
+        session_config: Any = None,
     ) -> None:
         """Send session approval message.
         
@@ -460,22 +491,38 @@ class SignClient:
             namespaces: Approved namespaces
             proposal_id: Proposal ID
         """
-        # IMPORTANT: Session approval is a JSON-RPC RESPONSE to wc_sessionPropose,
-        # not a request method call.
-        payload = {
-            "jsonrpc": "2.0",
-            "id": proposal_id,
-            "result": {
-                "relay": {"protocol": "irn"},
-                "responderPublicKey": responder_public_key,
-                "namespaces": namespaces,
-            },
+        # Official behavior (see @walletconnect/sign-client ENGINE_RPC_OPTS):
+        # - respond to wc_sessionPropose with JSON-RPC result on pairing topic
+        # - send wc_sessionSettle request on derived session topic
+
+        proposal_response = {"relay": {"protocol": "irn"}, "responderPublicKey": responder_public_key}
+        pairing_result = format_jsonrpc_result(proposal_id, proposal_response)
+        encoded = await self.core.crypto.encode(pairing_topic, pairing_result)
+        # wc_sessionPropose.res => ttl=300, prompt=false, tag=1101
+        await self.core.relayer.publish(pairing_topic, encoded, {"tag": 1101, "ttl": 300, "prompt": False})
+
+        settle_params: Dict[str, Any] = {
+            "relay": {"protocol": "irn"},
+            "namespaces": namespaces,
+            "controller": {"publicKey": responder_public_key, "metadata": self.metadata},
+            "expiry": expiry,
         }
-        
-        # Encode and publish
-        encoded = await self.core.crypto.encode(pairing_topic, payload)
-        # Session propose tag observed from Venice is 1100; approval response tag should be 1101.
-        await self.core.relayer.publish(pairing_topic, encoded, {"tag": 1101, "ttl": 24 * 60 * 60, "prompt": False})
+        if session_properties is not None:
+            settle_params["sessionProperties"] = session_properties
+        if scoped_properties is not None:
+            settle_params["scopedProperties"] = scoped_properties
+        if session_config is not None:
+            settle_params["sessionConfig"] = session_config
+
+        settle_request = {
+            "jsonrpc": "2.0",
+            "id": get_big_int_rpc_id(),
+            "method": "wc_sessionSettle",
+            "params": settle_params,
+        }
+        encoded_settle = await self.core.crypto.encode(session_topic, settle_request)
+        # wc_sessionSettle.req => ttl=300, prompt=false, tag=1102
+        await self.core.relayer.publish(session_topic, encoded_settle, {"tag": 1102, "ttl": 300, "prompt": False})
 
     async def reject(self, params: Dict[str, Any]) -> None:
         """Reject session proposal.
@@ -512,8 +559,8 @@ class SignClient:
         }
         
         encoded = await self.core.crypto.encode(topic, payload)
-        # Auth request tag observed from Venice is 1116; response tag should be 1117.
-        await self.core.relayer.publish(topic, encoded, {"tag": 1117, "ttl": 24 * 60 * 60, "prompt": False})
+        # wc_sessionPropose.reject => ttl=300, prompt=false, tag=1120
+        await self.core.relayer.publish(topic, encoded, {"tag": 1120, "ttl": 300, "prompt": False})
         
         # Delete proposal
         await self.proposal.delete(proposal_id)
@@ -547,7 +594,7 @@ class SignClient:
         }
         
         encoded = await self.core.crypto.encode(topic, payload)
-        await self.core.relayer.publish(topic, encoded, {"tag": 1117, "ttl": 24 * 60 * 60, "prompt": False})
+        await self.core.relayer.publish(topic, encoded, {"tag": 1117, "ttl": 3600, "prompt": True})
         
         # Store acknowledgment
         ack_called = False
@@ -581,7 +628,7 @@ class SignClient:
         
         # Calculate new expiry (7 days from now)
         import time
-        expiry = int(time.time() * 1000) + (7 * 24 * 60 * 60 * 1000)
+        expiry = int(time.time()) + (7 * 24 * 60 * 60)
         
         # Update session expiry immediately
         await self.session.update(topic, {"expiry": expiry})
@@ -600,7 +647,8 @@ class SignClient:
         }
         
         encoded = await self.core.crypto.encode(topic, payload)
-        await self.core.relayer.publish(topic, encoded)
+        # Auth request tag observed from Venice is 1116; response tag should be 1117.
+        await self.core.relayer.publish(topic, encoded, {"tag": 1117, "ttl": 24 * 60 * 60, "prompt": False})
         
         # Store acknowledgment
         ack_called = False
@@ -659,7 +707,8 @@ class SignClient:
         }
         
         encoded = await self.core.crypto.encode(topic, payload)
-        await self.core.relayer.publish(topic, encoded)
+        # Mirror JS engine opts observed via Docker oracle.
+        await self.core.relayer.publish(topic, encoded, {"tag": 1117, "ttl": 3600, "prompt": True})
         
         # Delete session
         await self.session.delete(topic)
@@ -694,7 +743,8 @@ class SignClient:
         }
         
         encoded = await self.core.crypto.encode(topic, payload)
-        await self.core.relayer.publish(topic, encoded)
+        # Auth request tag observed from Venice is 1116; response tag should be 1117.
+        await self.core.relayer.publish(topic, encoded, {"tag": 1117, "ttl": 24 * 60 * 60, "prompt": False})
 
     def get_pending_session_requests(self) -> list[Dict[str, Any]]:
         """Get pending session requests.
@@ -729,27 +779,46 @@ class SignClient:
         if not auth_request:
             raise ValueError(f"Auth request not found: {auth_id}")
         
-        topic = auth_request.get("topic")
-        if not topic:
-            raise ValueError("Auth request topic not found")
-        
-        # IMPORTANT: Auth approval is a JSON-RPC RESPONSE to wc_sessionAuthenticate.
-        payload = {
-            "jsonrpc": "2.0",
-            "id": auth_id,
-            "result": {
-                "auths": auths,
-            },
+        params_obj = auth_request.get("params") or {}
+        requester = params_obj.get("requester") if isinstance(params_obj, dict) else None
+        requester_public_key = None
+        requester_metadata = None
+        if isinstance(requester, dict):
+            requester_public_key = requester.get("publicKey")
+            requester_metadata = requester.get("metadata")
+        if not requester_public_key:
+            raise ValueError("Auth requester publicKey not found")
+
+        # Official sign-client:
+        # - response topic = hashKey(requesterPublicKey)
+        # - response is JSON-RPC result (tag 1117) encrypted as TYPE_1 using requesterPublicKey
+        response_topic = hash_key(requester_public_key)
+
+        responder_public_key = await self.core.crypto.generate_key_pair()
+        session_topic = await self.core.crypto.generate_shared_key(
+            responder_public_key, requester_public_key
+        )
+        await self.core.relayer.subscribe(session_topic)
+
+        result = {
+            "cacaos": auths,
+            "responder": {"publicKey": responder_public_key, "metadata": self.metadata},
         }
-        
-        encoded = await self.core.crypto.encode(topic, payload)
-        await self.core.relayer.publish(topic, encoded)
+        response_payload = format_jsonrpc_result(auth_id, result)
+        encode_opts = {
+            "type": 1,  # TYPE_1
+            "receiverPublicKey": requester_public_key,
+            "senderPublicKey": responder_public_key,
+        }
+        encoded = await self.core.crypto.encode(response_topic, response_payload, encode_opts)
+        # wc_sessionAuthenticate.res => ttl=ONE_HOUR(3600), prompt=false, tag=1117
+        await self.core.relayer.publish(response_topic, encoded, {"tag": 1117, "ttl": 3600, "prompt": False})
         
         # Wait for session settlement (similar to approve flow)
         # For now, we'll create a session from the auth request
         # In a real implementation, we'd wait for wc_sessionSettle
         import time
-        expiry = int(time.time() * 1000) + (7 * 24 * 60 * 60 * 1000)
+        expiry = int(time.time()) + (7 * 24 * 60 * 60)
         
         # Extract namespaces from auths (if available)
         # This is a simplified version - real impl would parse CACAO
@@ -773,20 +842,20 @@ class SignClient:
                             }
         
         session = {
-            "topic": topic,
+            "topic": session_topic,
             "expiry": expiry,
             "namespaces": namespaces,
-            "peer": auth_request.get("params", {}).get("requester", {}),
+            "peer": requester_metadata or {},
         }
         
         # Store session
-        await self.session.set(topic, session)
+        await self.session.set(session_topic, session)
         
         # Register expiry
-        self.core.expirer.set(topic, expiry)
+        self.core.expirer.set(session_topic, expiry)
         
-        # Remove pending auth request
-        del self._pending_auth_requests[auth_id]
+        # Remove pending auth request (idempotent: Venice may retry / duplicate events)
+        self._pending_auth_requests.pop(auth_id, None)
         
         return {"session": session}
 
@@ -809,22 +878,30 @@ class SignClient:
         if not auth_request:
             raise ValueError(f"Auth request not found: {auth_id}")
         
-        topic = auth_request.get("topic")
-        if not topic:
-            raise ValueError("Auth request topic not found")
+        params_obj = auth_request.get("params") or {}
+        requester = params_obj.get("requester") if isinstance(params_obj, dict) else None
+        requester_public_key = None
+        if isinstance(requester, dict):
+            requester_public_key = requester.get("publicKey")
+        if not requester_public_key:
+            raise ValueError("Auth requester publicKey not found")
+
+        response_topic = hash_key(requester_public_key)
+        responder_public_key = await self.core.crypto.generate_key_pair()
         
-        # IMPORTANT: Auth rejection is a JSON-RPC ERROR response to wc_sessionAuthenticate.
-        payload = {
-            "jsonrpc": "2.0",
-            "id": auth_id,
-            "error": reason,
+        # Send JSON-RPC error to response topic (wc_sessionAuthenticate reject path)
+        error_payload = format_jsonrpc_error(auth_id, reason)
+        encode_opts = {
+            "type": 1,  # TYPE_1
+            "receiverPublicKey": requester_public_key,
+            "senderPublicKey": responder_public_key,
         }
+        encoded = await self.core.crypto.encode(response_topic, error_payload, encode_opts)
+        # wc_sessionAuthenticate.reject => ttl=300, prompt=false, tag=1118
+        await self.core.relayer.publish(response_topic, encoded, {"tag": 1118, "ttl": 300, "prompt": False})
         
-        encoded = await self.core.crypto.encode(topic, payload)
-        await self.core.relayer.publish(topic, encoded)
-        
-        # Remove pending auth request
-        del self._pending_auth_requests[auth_id]
+        # Remove pending auth request (idempotent)
+        self._pending_auth_requests.pop(auth_id, None)
 
     def format_auth_message(self, params: Dict[str, Any]) -> str:
         """Format auth message (CACAO format).

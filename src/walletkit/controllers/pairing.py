@@ -7,17 +7,17 @@ from walletkit.utils.crypto_utils import generate_random_bytes32
 from walletkit.utils.uri import format_uri, parse_uri
 
 
-def calc_expiry(ttl_ms: int) -> int:
+def calc_expiry(ttl_s: int) -> int:
     """Calculate expiry timestamp.
     
     Args:
-        ttl_ms: Time to live in milliseconds
+        ttl_s: Time to live in seconds
         
     Returns:
-        Expiry timestamp in milliseconds
+        Expiry timestamp in seconds (unix epoch)
     """
     import time
-    return int(time.time() * 1000) + ttl_ms
+    return int(time.time()) + ttl_s
 
 
 class Pairing:
@@ -75,7 +75,7 @@ class Pairing:
         topic = await self.core.crypto.set_sym_key(sym_key)
         
         # Calculate expiry (5 minutes default)
-        FIVE_MINUTES = 5 * 60 * 1000
+        FIVE_MINUTES = 5 * 60
         expiry = calc_expiry(FIVE_MINUTES)
         
         # Create pairing
@@ -143,7 +143,7 @@ class Pairing:
         # Create pairing
         pairing = {
             "topic": topic,
-            "expiry": expiry_timestamp or calc_expiry(5 * 60 * 1000),
+            "expiry": expiry_timestamp or calc_expiry(5 * 60),
             "relay": relay,
             "active": False,
             "methods": parsed.get("methods"),
