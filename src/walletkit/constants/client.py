@@ -1,0 +1,11 @@
+"""Client constants."""
+PROTOCOL = "wc"
+PROTOCOL_VERSION = 2
+CLIENT_CONTEXT = "WalletKit"
+
+CLIENT_STORAGE_PREFIX = f"{PROTOCOL}@{PROTOCOL_VERSION}:{CLIENT_CONTEXT}:"
+
+CLIENT_STORAGE_OPTIONS = {
+    "database": ":memory:",
+}
+

@@ -1,0 +1,84 @@
+"""Core WalletConnect implementation."""
+from typing import Any, Optional
+
+from walletkit.controllers.crypto import Crypto
+from walletkit.controllers.keychain import KeyChain
+from walletkit.utils.events import EventEmitter
+from walletkit.utils.storage import IKeyValueStorage, MemoryStorage
+
+
+class Core:
+    """Core WalletConnect protocol implementation."""
+
+    def __init__(
+        self,
+        project_id: Optional[str] = None,
+        relay_url: Optional[str] = None,
+        storage: Optional[IKeyValueStorage] = None,
+        logger: Any = None,  # Logger
+        storage_prefix: str = "wc@2:core:",
+    ) -> None:
+        """Initialize Core.
+        
+        Args:
+            project_id: WalletConnect project ID
+            relay_url: Relay server URL
+            storage: Storage backend (defaults to MemoryStorage)
+            logger: Logger instance
+            storage_prefix: Storage key prefix
+        """
+        self.protocol = "wc"
+        self.version = 2
+        self.project_id = project_id
+        self.relay_url = relay_url or "wss://relay.walletconnect.com"
+        self.storage = storage or MemoryStorage()
+        self.logger = logger or self._create_default_logger()
+        self.storage_prefix = storage_prefix
+        
+        self.events = EventEmitter()
+        self.crypto = Crypto(self.storage, self.logger, storage_prefix=storage_prefix)
+        
+        # Placeholders for other controllers (to be implemented)
+        self.relayer: Any = None  # Relayer
+        self.pairing: Any = None  # Pairing
+        self.echo_client: Any = None  # EchoClient
+        self.event_client: Any = None  # EventClient
+        
+        self._initialized = False
+
+    async def start(self) -> None:
+        """Start Core (initialize all subsystems)."""
+        if self._initialized:
+            return
+        
+        await self.crypto.init()
+        # TODO: Initialize other controllers
+        
+        self._initialized = True
+        self.logger.info("Core Initialization Success")
+
+    def _create_default_logger(self) -> Any:
+        """Create default logger.
+        
+        Returns:
+            Logger instance
+        """
+        # Simple logger implementation
+        class SimpleLogger:
+            def trace(self, msg: str) -> None:
+                pass
+
+            def debug(self, msg: str) -> None:
+                print(f"[DEBUG] {msg}")
+
+            def info(self, msg: str) -> None:
+                print(f"[INFO] {msg}")
+
+            def warn(self, msg: str, *args: Any) -> None:
+                print(f"[WARN] {msg}")
+
+            def error(self, msg: str, *args: Any) -> None:
+                print(f"[ERROR] {msg}")
+
+        return SimpleLogger()
+
