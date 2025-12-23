@@ -1,6 +1,7 @@
 """Relayer controller implementation."""
 import asyncio
 import json
+import os
 from typing import Any, Dict, Optional
 from urllib.parse import urlparse, parse_qs, urlencode, urlunparse
 
@@ -229,6 +230,8 @@ class Relayer:
         last_error = None
         for attempt in range(max_retries):
             try:
+                if os.getenv("WALLETKIT_WC_DEBUG") == "1":
+                    self.logger.debug(f"[WC_DEBUG] irn_publish topic={topic} tag={tag} ttl={ttl} prompt={prompt}")
                 await self.request("irn_publish", params)
                 return  # Success
             except Exception as e:
@@ -301,29 +304,14 @@ class Relayer:
         if topic in self._subscribed_topics:
             return self._subscribed_topics[topic]
         
-        request_id = str(get_big_int_rpc_id())
-        payload = {
-            "method": "irn_subscribe",
-            "params": {
-                "topic": topic,
-            },
-        }
-        
-        request = format_jsonrpc_request(
-            method=payload["method"],
-            params=payload["params"],
-            request_id=request_id,
-        )
-        
-        await self._send(request)
-        
-        # Store subscription
-        self._subscribed_topics[topic] = request_id
+        # Await subscription response so we can surface relay errors and be sure we're subscribed.
+        sub_id = await self.request("irn_subscribe", {"topic": topic})
+        self._subscribed_topics[topic] = str(sub_id) if sub_id is not None else str(get_big_int_rpc_id())
         
         # Fire-and-forget event emission
-        asyncio.create_task(self.events.emit("subscribe", {"topic": topic, "id": request_id}))
+        asyncio.create_task(self.events.emit("subscribe", {"topic": topic, "id": self._subscribed_topics[topic]}))
         
-        return request_id
+        return self._subscribed_topics[topic]
 
     async def unsubscribe(
         self,
@@ -343,20 +331,7 @@ class Relayer:
         
         subscription_id = self._subscribed_topics[topic]
         
-        payload = {
-            "method": "irn_unsubscribe",
-            "params": {
-                "id": subscription_id,
-                "topic": topic,
-            },
-        }
-        
-        request = format_jsonrpc_request(
-            method=payload["method"],
-            params=payload["params"],
-        )
-        
-        await self._send(request)
+        await self.request("irn_unsubscribe", {"id": subscription_id, "topic": topic})
         
         del self._subscribed_topics[topic]
         # Fire-and-forget event emission
@@ -431,6 +406,14 @@ class Relayer:
             params = payload.get("params", {})
             topic = params.get("data", {}).get("topic")
             message = params.get("data", {}).get("message")
+            if os.getenv("WALLETKIT_WC_DEBUG") == "1":
+                try:
+                    data = params.get("data", {}) or {}
+                    if isinstance(data, dict):
+                        meta = {k: data.get(k) for k in ["topic", "tag", "publishedAt"] if k in data}
+                        self.logger.debug(f"[WC_DEBUG] irn_subscription meta={meta}")
+                except Exception:
+                    pass
             
             if topic and message:
                 # Fire-and-forget event emission

@@ -1,5 +1,6 @@
 """SignClient implementation for WalletConnect Sign Protocol."""
 import json
+import os
 from typing import Any, Callable, Dict, Optional
 
 from walletkit.controllers.expirer import EXPIRER_EVENTS, parse_expirer_target
@@ -102,12 +103,23 @@ class SignClient:
             try:
                 # Decode message
                 payload = await self.core.crypto.decode(topic, message)
-                
+
+                if os.getenv("WALLETKIT_WC_DEBUG") == "1":
+                    method = payload.get("method")
+                    pid = payload.get("id")
+                    self.core.logger.debug(f"[WC_DEBUG] inbound topic={topic} method={method} id={pid}")
+                    # Helpful when we receive JSON-RPC responses (no method)
+                    if not method:
+                        self.core.logger.debug(f"[WC_DEBUG] inbound payload keys={list(payload.keys())}")
+
                 # Handle based on method
                 method = payload.get("method")
                 if method:
                     await self._handle_protocol_message(topic, payload)
             except Exception as e:
+                if os.getenv("WALLETKIT_WC_DEBUG") == "1":
+                    self.core.logger.error(f"[WC_DEBUG] decode failed topic={topic} err={e}")
+                    self.core.logger.error(f"[WC_DEBUG] raw message prefix={str(message)[:80]}")
                 self.core.logger.error(f"Error handling relayer message: {e}")
         
         self.core.relayer.on("message", on_message)
@@ -327,6 +339,16 @@ class SignClient:
             "topic": topic,
             "params": params,
         }
+
+        if os.getenv("WALLETKIT_WC_DEBUG") == "1":
+            try:
+                keys = list(params.keys()) if isinstance(params, dict) else []
+                self.core.logger.debug(f"[WC_DEBUG] authenticate params keys={keys}")
+                ap = params.get("authPayload") if isinstance(params, dict) else None
+                if isinstance(ap, dict):
+                    self.core.logger.debug(f"[WC_DEBUG] authPayload keys={list(ap.keys())}")
+            except Exception:
+                pass
         
         # Emit event
         await self.events.emit("session_authenticate", {
@@ -452,7 +474,8 @@ class SignClient:
         
         # Encode and publish
         encoded = await self.core.crypto.encode(pairing_topic, payload)
-        await self.core.relayer.publish(pairing_topic, encoded)
+        # Session propose tag observed from Venice is 1100; approval response tag should be 1101.
+        await self.core.relayer.publish(pairing_topic, encoded, {"tag": 1101, "ttl": 24 * 60 * 60, "prompt": False})
 
     async def reject(self, params: Dict[str, Any]) -> None:
         """Reject session proposal.
@@ -489,7 +512,8 @@ class SignClient:
         }
         
         encoded = await self.core.crypto.encode(topic, payload)
-        await self.core.relayer.publish(topic, encoded)
+        # Auth request tag observed from Venice is 1116; response tag should be 1117.
+        await self.core.relayer.publish(topic, encoded, {"tag": 1117, "ttl": 24 * 60 * 60, "prompt": False})
         
         # Delete proposal
         await self.proposal.delete(proposal_id)
@@ -523,7 +547,7 @@ class SignClient:
         }
         
         encoded = await self.core.crypto.encode(topic, payload)
-        await self.core.relayer.publish(topic, encoded)
+        await self.core.relayer.publish(topic, encoded, {"tag": 1117, "ttl": 24 * 60 * 60, "prompt": False})
         
         # Store acknowledgment
         ack_called = False
@@ -709,13 +733,11 @@ class SignClient:
         if not topic:
             raise ValueError("Auth request topic not found")
         
-        # Send approval message
+        # IMPORTANT: Auth approval is a JSON-RPC RESPONSE to wc_sessionAuthenticate.
         payload = {
             "jsonrpc": "2.0",
             "id": auth_id,
-            "method": "wc_sessionAuthenticateApprove",
-            "params": {
-                "id": auth_id,
+            "result": {
                 "auths": auths,
             },
         }
@@ -791,15 +813,11 @@ class SignClient:
         if not topic:
             raise ValueError("Auth request topic not found")
         
-        # Send rejection message
+        # IMPORTANT: Auth rejection is a JSON-RPC ERROR response to wc_sessionAuthenticate.
         payload = {
             "jsonrpc": "2.0",
             "id": auth_id,
-            "method": "wc_sessionAuthenticateReject",
-            "params": {
-                "id": auth_id,
-                "reason": reason,
-            },
+            "error": reason,
         }
         
         encoded = await self.core.crypto.encode(topic, payload)
@@ -898,12 +916,14 @@ class SignClient:
             resources_lines = "\n".join([f"- {r}" for r in resources])
             resources_line = f"Resources:\n{resources_lines}"
         
-        # Build message
+        # Build message (match @walletconnect/utils `formatMessage` behavior):
+        # - Keep empty strings to preserve intentional blank lines
+        # - Only remove None values
         message_parts = [
             header,
             wallet_address,
             "",
-            statement,
+            statement,  # may be None
             "",
             uri,
             version_line,
@@ -916,8 +936,7 @@ class SignClient:
             resources_line,
         ]
         
-        # Filter out None/empty values
-        message = "\n".join([part for part in message_parts if part])
+        message = "\n".join([part for part in message_parts if part is not None])
         
         return message
     

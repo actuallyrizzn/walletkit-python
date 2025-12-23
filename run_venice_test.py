@@ -89,6 +89,7 @@ async def extract_wc_uri_from_web3modal(page) -> str | None:
 
 async def main():
     """Run fully automated venice.ai test."""
+    os.environ.setdefault("WALLETKIT_WC_DEBUG", "1")
     project_id = os.getenv("WALLETCONNECT_PROJECT_ID")  # prefer user's project id if set
     relay_origin = os.getenv("WALLETCONNECT_ORIGIN")
     
@@ -321,8 +322,84 @@ async def main():
                 else:
                     print(f"    [SKIP] Method {method} not handled")
 
+            async def on_authenticate(event: dict) -> None:
+                """Handle WalletConnect Auth (wc_sessionAuthenticate) requests."""
+                auth_id = event.get("id")
+                topic = event.get("topic")
+                params = event.get("params", {}) or {}
+
+                print(f"\n[AUTH] session_authenticate id={auth_id} topic={topic}")
+
+                # Venice (via AppKit) sends: { authPayload, requester, expiryTimestamp }
+                payload_params = {}
+                if isinstance(params, dict):
+                    ap = params.get("authPayload")
+                    if isinstance(ap, dict):
+                        payload_params = ap
+                    else:
+                        # fallback shapes
+                        payload_params = params.get("request") or params.get("payloadParams") or {}
+                if not isinstance(payload_params, dict):
+                    payload_params = {}
+
+                # Determine chain id for did:pkh
+                chain_id = None
+                # Common fields
+                if isinstance(params, dict):
+                    chain_id = params.get("chainId") or params.get("chain") or chain_id
+                if not chain_id:
+                    chains = payload_params.get("chains") or []
+                    if isinstance(chains, list) and chains:
+                        chain_id = chains[0]
+                if isinstance(chain_id, str) and chain_id.startswith("eip155:"):
+                    chain_id_num = chain_id.split(":")[1]
+                else:
+                    chain_id_num = str(chain_id or "1")
+
+                iss = f"did:pkh:eip155:{chain_id_num}:{wallet_address}"
+
+                # Ensure required fields exist
+                payload_params.setdefault("version", "1")
+
+                try:
+                    message = wallet.format_auth_message(payload_params, iss)
+                except Exception as e:
+                    print(f"    [AUTH][ERROR] format_auth_message failed: {e}")
+                    return
+
+                signature = sign_personal_message(account["private_key"], message)
+
+                # Build CACAO auth object (minimal, matching @walletconnect/utils buildAuthObject)
+                cacao = {
+                    "h": {"t": "caip122"},
+                    "p": {
+                        "iss": iss,
+                        "domain": payload_params.get("domain"),
+                        "aud": payload_params.get("aud"),
+                        "version": payload_params.get("version"),
+                        "nonce": payload_params.get("nonce"),
+                        "iat": payload_params.get("iat"),
+                        "statement": payload_params.get("statement"),
+                        "requestId": payload_params.get("requestId"),
+                        "resources": payload_params.get("resources"),
+                        "nbf": payload_params.get("nbf"),
+                        "exp": payload_params.get("exp"),
+                    },
+                    "s": {"t": "eip191", "s": signature},
+                }
+
+                # Drop None values in payload to avoid schema issues
+                cacao["p"] = {k: v for k, v in cacao["p"].items() if v is not None}
+
+                try:
+                    await wallet.approve_session_authenticate({"id": auth_id, "auths": [cacao]})
+                    print("    [AUTH][OK] Sent wc_sessionAuthenticateApprove")
+                except Exception as e:
+                    print(f"    [AUTH][ERROR] approve_session_authenticate failed: {e}")
+
             wallet.on("session_proposal", on_proposal)
             wallet.on("session_request", on_request)
+            wallet.on("session_authenticate", on_authenticate)
             
             print("\n[5/8] Clicking Web3 Wallet button...")
             await page.wait_for_load_state("domcontentloaded", timeout=30000)
