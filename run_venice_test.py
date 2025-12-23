@@ -236,6 +236,7 @@ async def main():
             wallet._ethereum_account = account
 
             session_ready = asyncio.Event()
+            signing_request_seen = asyncio.Event()
             session_topic = None
 
             # Event handlers
@@ -286,18 +287,27 @@ async def main():
                 request_params = request.get("params", [])
 
                 print(f"\n[SIGN] Request: {method} (ID: {request_id})")
+                signing_request_seen.set()
 
-                if method == "personal_sign" and len(request_params) >= 2:
-                    message_hex = request_params[0]
-                    if message_hex.startswith("0x"):
-                        message_bytes = bytes.fromhex(message_hex[2:])
+                if method in ("personal_sign", "eth_sign") and len(request_params) >= 2:
+                    # WalletConnect payloads vary:
+                    # - personal_sign: [message, address]
+                    # - eth_sign: [address, message]
+                    if method == "personal_sign":
+                        message_hex = request_params[0]
                     else:
-                        message_bytes = bytes.fromhex(message_hex)
+                        message_hex = request_params[1]
 
-                    try:
-                        message = message_bytes.decode("utf-8")
-                    except Exception:
-                        message = message_hex
+                    # Venice sometimes sends hex-encoded message; fall back to raw string
+                    message = None
+                    if isinstance(message_hex, str) and message_hex.startswith("0x"):
+                        try:
+                            message_bytes = bytes.fromhex(message_hex[2:])
+                            message = message_bytes.decode("utf-8", errors="replace")
+                        except Exception:
+                            message = message_hex
+                    else:
+                        message = str(message_hex)
 
                     print(f"    Message: {message[:50]}...")
 
@@ -358,7 +368,24 @@ async def main():
                 if session_topic:
                     print(f"    [SUCCESS] Session established! Topic: {session_topic}")
                     print("\n[READY] Wallet ready. Waiting for signing requests...")
-                    await asyncio.sleep(20)  # Wait for venice.ai to send signing request
+                    try:
+                        await page.screenshot(path="venice_after_session.png", full_page=True)
+                        print("    [DEBUG] Screenshot saved: venice_after_session.png")
+                    except Exception:
+                        pass
+                    # Important: do NOT close the modal here. Many WalletConnect dApps only
+                    # proceed once the modal observes the connection and advances the flow.
+
+                    try:
+                        await asyncio.wait_for(signing_request_seen.wait(), timeout=120.0)
+                        print("    [SUCCESS] Saw at least one signing request.")
+                    except asyncio.TimeoutError:
+                        print("    [WARNING] No signing request observed within 120s (Venice may require extra UI steps).")
+                    try:
+                        await page.screenshot(path="venice_after_wait.png", full_page=True)
+                        print("    [DEBUG] Screenshot saved: venice_after_wait.png")
+                    except Exception:
+                        pass
                 else:
                     print("    [ERROR] Session topic not set")
             except asyncio.TimeoutError:

@@ -1,11 +1,16 @@
 """Crypto controller implementation."""
+import base64
+import hashlib
 import json
+import time
 from typing import Any, Optional
+
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from walletkit.constants.crypto import CRYPTO_CLIENT_SEED, CRYPTO_CONTEXT, CRYPTO_JWT_TTL
 from walletkit.controllers.keychain import KeyChain
 from walletkit.utils.crypto_utils import (
-    BASE64,
+    BASE64URL,
     TYPE_0,
     TYPE_1,
     TYPE_2,
@@ -76,14 +81,13 @@ class Crypto:
         self._check_initialized()
         if self._client_id:
             return self._client_id
-        
-        # TODO: Implement proper JWT-based client ID generation
-        # For now, use a simple approach
-        seed = await self._get_client_seed()
-        # Generate a deterministic ID from seed
-        # This is a simplified version - full implementation would use relay-auth
-        self._client_id = hash_key(seed)
-        return self._client_id
+
+        # WalletConnect relay-auth uses an "iss" that encodes the signing public key.
+        # We implement the common did:key encoding for Ed25519 public keys.
+        seed_hex = await self._get_client_seed()
+        _, iss = self._get_relay_auth_keypair_and_iss(seed_hex)
+        self._client_id = iss
+        return iss
 
     async def generate_key_pair(self) -> str:
         """Generate X25519 key pair.
@@ -107,16 +111,24 @@ class Crypto:
             JWT string
         
         Note:
-            This is a placeholder. Full implementation requires JWT library.
+            WalletConnect relay expects an `auth` JWT (query param) signed by the client's
+            relay-auth key pair. We implement a minimal compatible EdDSA (Ed25519) JWT.
         """
         self._check_initialized()
-        # TODO: Implement proper JWT signing with relay-auth equivalent
-        # For now, return a placeholder
-        seed = await self._get_client_seed()
+        seed_hex = await self._get_client_seed()
+        private_key, iss = self._get_relay_auth_keypair_and_iss(seed_hex)
+
+        iat = int(time.time())
+        exp = iat + int(CRYPTO_JWT_TTL / 1000)
         sub = self.random_session_identifier
-        # This would normally use relay-auth.signJWT
-        # Placeholder implementation
-        return f"placeholder_jwt_{aud}_{sub}"
+
+        header = {"alg": "EdDSA", "typ": "JWT"}
+        payload = {"iss": iss, "sub": sub, "aud": aud, "iat": iat, "exp": exp}
+
+        signing_input = f"{self._b64url_json(header)}.{self._b64url_json(payload)}".encode("utf-8")
+        signature = private_key.sign(signing_input)
+        token = f"{signing_input.decode('utf-8')}.{self._b64url_encode(signature)}"
+        return token
 
     async def generate_shared_key(
         self,
@@ -195,7 +207,7 @@ class Crypto:
             opts = {}
         
         message = json.dumps(payload)
-        encoding = opts.get("encoding", BASE64)
+        encoding = opts.get("encoding", BASE64URL)
         
         # Check if type 2 envelope (unencrypted)
         if opts.get("type") == TYPE_2:
@@ -243,7 +255,7 @@ class Crypto:
         if opts is None:
             opts = {}
         
-        encoding = opts.get("encoding", BASE64)
+        encoding = opts.get("encoding", BASE64URL)
         
         # Check payload type
         payload_type = get_payload_type(encoded, encoding)
@@ -274,7 +286,7 @@ class Crypto:
             self.logger.error(str(error))
             raise
 
-    def get_payload_type(self, encoded: str, encoding: str = BASE64) -> int:
+    def get_payload_type(self, encoded: str, encoding: str = BASE64URL) -> int:
         """Get payload type from encoded message.
         
         Args:
@@ -287,7 +299,7 @@ class Crypto:
         return get_payload_type(encoded, encoding)
 
     def get_payload_sender_public_key(
-        self, encoded: str, encoding: str = BASE64
+        self, encoded: str, encoding: str = BASE64URL
     ) -> Optional[str]:
         """Get sender public key from encoded message.
         
@@ -301,6 +313,52 @@ class Crypto:
         return get_payload_sender_public_key(encoded, encoding)
 
     # ---------- Private ----------------------------------------------- #
+
+    @staticmethod
+    def _b64url_encode(data: bytes) -> str:
+        return base64.urlsafe_b64encode(data).rstrip(b"=").decode("ascii")
+
+    @classmethod
+    def _b64url_json(cls, obj: dict[str, Any]) -> str:
+        raw = json.dumps(obj, separators=(",", ":"), sort_keys=True).encode("utf-8")
+        return cls._b64url_encode(raw)
+
+    @staticmethod
+    def _b58encode(data: bytes) -> str:
+        """Minimal base58btc encoder (no checksum)."""
+        alphabet = b"123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
+        n = int.from_bytes(data, "big")
+        out = bytearray()
+        while n > 0:
+            n, r = divmod(n, 58)
+            out.append(alphabet[r])
+        # preserve leading zeros
+        pad = 0
+        for b in data:
+            if b == 0:
+                pad += 1
+            else:
+                break
+        return (alphabet[0:1] * pad + out[::-1]).decode("ascii")
+
+    def _get_relay_auth_keypair_and_iss(self, seed_hex: str) -> tuple[Ed25519PrivateKey, str]:
+        """Derive a deterministic Ed25519 key pair for relay auth from the client seed."""
+        try:
+            seed_bytes = bytes.fromhex(seed_hex)
+        except Exception:
+            seed_bytes = seed_hex.encode("utf-8")
+
+        # Ensure 32 bytes for Ed25519 private key
+        if len(seed_bytes) != 32:
+            seed_bytes = hashlib.sha256(seed_bytes).digest()
+
+        private_key = Ed25519PrivateKey.from_private_bytes(seed_bytes)
+        public_key_bytes = private_key.public_key().public_bytes_raw()
+
+        # did:key for Ed25519 uses multicodec prefix 0xed01
+        multicodec = b"\xed\x01" + public_key_bytes
+        did = "did:key:z" + self._b58encode(multicodec)
+        return private_key, did
 
     async def _set_private_key(self, public_key: str, private_key: str) -> str:
         """Set private key in keychain.

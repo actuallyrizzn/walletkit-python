@@ -134,7 +134,14 @@ def decode_type_byte(byte_data: bytes) -> int:
     Returns:
         Type value
     """
-    return int(byte_data.decode("utf-8"))
+    # WalletConnect reference encodes the type byte as ASCII digits ("0","1","2"),
+    # but some environments/libraries may emit a raw byte (0x00/0x01/0x02).
+    try:
+        return int(byte_data.decode("utf-8"))
+    except Exception:
+        if len(byte_data) == 1:
+            return byte_data[0]
+        raise
 
 
 def to_base64url(base64_str: str) -> str:

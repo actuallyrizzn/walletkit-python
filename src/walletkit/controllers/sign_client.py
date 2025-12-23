@@ -360,10 +360,21 @@ class SignClient:
         except KeyError:
             raise ValueError("Proposal topic not found")
         
-        topic = proposal.get("topic")
-        
-        if not topic:
+        pairing_topic = proposal.get("topic")
+        if not pairing_topic:
             raise ValueError("Proposal topic not found")
+
+        proposer = (proposal.get("params") or {}).get("proposer") or {}
+        proposer_public_key = proposer.get("publicKey")
+        if not proposer_public_key:
+            raise ValueError("Proposal proposer publicKey not found")
+
+        # Generate responder key pair + derive new session topic
+        responder_public_key = await self.core.crypto.generate_key_pair()
+        session_topic = await self.core.crypto.generate_shared_key(responder_public_key, proposer_public_key)
+
+        # Subscribe to the new session topic so we can receive wc_sessionSettle and later requests
+        await self.core.relayer.subscribe(session_topic)
         
         # Create session
         namespaces = params.get("namespaces", {})
@@ -376,7 +387,7 @@ class SignClient:
         expiry = int(time.time() * 1000) + (7 * 24 * 60 * 60 * 1000)
         
         session = {
-            "topic": topic,
+            "topic": session_topic,
             "expiry": expiry,
             "namespaces": namespaces,
             "sessionProperties": session_properties,
@@ -388,7 +399,12 @@ class SignClient:
         }
         
         # Send approval message
-        await self._send_session_approval(topic, session, proposal_id)
+        await self._send_session_approval(
+            pairing_topic=pairing_topic,
+            responder_public_key=responder_public_key,
+            namespaces=namespaces,
+            proposal_id=proposal_id,
+        )
         
         # Store acknowledgment callback
         ack_called = False
@@ -397,44 +413,46 @@ class SignClient:
             """Acknowledgment callback."""
             nonlocal ack_called
             if not ack_called:
-                # Wait for session_settle message
-                # For now, just mark as called
+                # In a full implementation, this should only resolve after wc_sessionSettle
+                # is received on the derived session topic.
                 ack_called = True
-                # Store session immediately (in real impl, wait for settlement)
-                await self.session.set(topic, session)
-                # Delete proposal
+                # Delete proposal after ack
                 await self.proposal.delete(proposal_id)
         
-        self._pending_acknowledgments[topic] = acknowledged
+        self._pending_acknowledgments[session_topic] = acknowledged
         
-        return {"topic": topic, "acknowledged": acknowledged}
+        return {"topic": session_topic, "acknowledged": acknowledged}
 
     async def _send_session_approval(
-        self, topic: str, session: Dict[str, Any], proposal_id: int
+        self,
+        pairing_topic: str,
+        responder_public_key: str,
+        namespaces: Dict[str, Any],
+        proposal_id: int,
     ) -> None:
         """Send session approval message.
         
         Args:
-            topic: Session topic
-            session: Session data
+            pairing_topic: Pairing topic (topic used for the proposal exchange)
+            responder_public_key: Responder X25519 public key (hex)
+            namespaces: Approved namespaces
             proposal_id: Proposal ID
         """
-        # Create approval payload
+        # IMPORTANT: Session approval is a JSON-RPC RESPONSE to wc_sessionPropose,
+        # not a request method call.
         payload = {
             "jsonrpc": "2.0",
             "id": proposal_id,
-            "method": "wc_sessionApprove",
-            "params": {
-                "id": proposal_id,
+            "result": {
                 "relay": {"protocol": "irn"},
-                "responderPublicKey": "",  # Will be set by crypto
-                "namespaces": session["namespaces"],
+                "responderPublicKey": responder_public_key,
+                "namespaces": namespaces,
             },
         }
         
         # Encode and publish
-        encoded = await self.core.crypto.encode(topic, payload)
-        await self.core.relayer.publish(topic, encoded)
+        encoded = await self.core.crypto.encode(pairing_topic, payload)
+        await self.core.relayer.publish(pairing_topic, encoded)
 
     async def reject(self, params: Dict[str, Any]) -> None:
         """Reject session proposal.

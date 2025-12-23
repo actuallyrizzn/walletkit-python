@@ -2,6 +2,7 @@
 import asyncio
 import json
 from typing import Any, Dict, Optional
+from urllib.parse import urlparse, parse_qs, urlencode, urlunparse
 
 import websockets
 from websockets.client import WebSocketClientProtocol
@@ -47,6 +48,7 @@ class Relayer:
         self._connecting = False
         self._subscribed_topics: Dict[str, str] = {}  # topic -> subscription_id
         self._message_queue: list[Dict[str, Any]] = []
+        self._pending_rpc: Dict[int, asyncio.Future] = {}
         self._receive_task: Optional[asyncio.Task] = None
         self._reconnect_task: Optional[asyncio.Task] = None
         self._reconnect_attempts = 0
@@ -104,10 +106,29 @@ class Relayer:
     
     async def _do_connect(self) -> None:
         """Perform actual connection."""
-        # Format relay URL with project ID if available
+        # WalletConnect relay requires an `auth` JWT (relay-auth) + ua + projectId.
+        # Follow the reference behavior of `formatRelayRpcUrl`.
         url = self.relay_url
+        auth = await self.core.crypto.sign_jwt(self.relay_url)
+        ua = f"{self.protocol}-{self.version}/walletkit-python"
+
+        parsed = urlparse(url)
+        qs = parse_qs(parsed.query or "")
+        qs["auth"] = [auth]
+        qs["ua"] = [ua]
         if self.project_id:
-            url = f"{url}?projectId={self.project_id}"
+            qs["projectId"] = [self.project_id]
+
+        url = urlunparse(
+            (
+                parsed.scheme,
+                parsed.netloc,
+                parsed.path,
+                parsed.params,
+                urlencode(qs, doseq=True),
+                parsed.fragment,
+            )
+        )
         
         self.logger.info(f"Connecting to relay: {url}")
         
@@ -196,24 +217,19 @@ class Relayer:
         if not self.connected:
             await self.connect()
         
-        payload = {
-            "method": "irn_publish",
-            "params": {
-                "topic": topic,
-                "message": message,
-            },
-        }
-        
-        request = format_jsonrpc_request(
-            method=payload["method"],
-            params=payload["params"],
-        )
+        # WalletConnect relay API expects ttl/prompt/tag for publishes.
+        # Defaults align with reference implementation (6 hours, prompt=false, tag=0).
+        ttl = (opts or {}).get("ttl", 6 * 60 * 60)  # seconds
+        prompt = (opts or {}).get("prompt", False)
+        tag = (opts or {}).get("tag", 0)
+
+        params = {"topic": topic, "message": message, "ttl": ttl, "prompt": prompt, "tag": tag}
         
         # Retry logic for publish
         last_error = None
         for attempt in range(max_retries):
             try:
-                await self._send(request)
+                await self.request("irn_publish", params)
                 return  # Success
             except Exception as e:
                 last_error = e
@@ -235,6 +251,32 @@ class Relayer:
         # All retries failed
         self.logger.error(f"Failed to publish after {max_retries} attempts: {last_error}")
         raise last_error
+
+    async def request(self, method: str, params: Dict[str, Any]) -> Any:
+        """Send an RPC request and await the response."""
+        self._check_initialized()
+        if not self.connected:
+            await self.connect()
+
+        req = format_jsonrpc_request(method=method, params=params)
+        req_id = req.get("id")
+        if not isinstance(req_id, int):
+            # get_big_int_rpc_id should return an int; be strict so we can map responses
+            raise ValueError(f"Invalid request id: {req_id}")
+
+        fut: asyncio.Future = asyncio.get_event_loop().create_future()
+        self._pending_rpc[req_id] = fut
+
+        await self._send(req)
+
+        try:
+            payload = await asyncio.wait_for(fut, timeout=15.0)
+        finally:
+            self._pending_rpc.pop(req_id, None)
+
+        if isinstance(payload, dict) and payload.get("error"):
+            raise RuntimeError(payload["error"])
+        return payload.get("result") if isinstance(payload, dict) else payload
 
     async def subscribe(
         self,
@@ -357,6 +399,8 @@ class Relayer:
         try:
             async for message in self._websocket:
                 try:
+                    # Any inbound frame indicates the connection is alive
+                    self._last_heartbeat = asyncio.get_event_loop().time()
                     payload = json.loads(message)
                     await self._handle_message(payload)
                 except json.JSONDecodeError as e:
@@ -401,6 +445,13 @@ class Relayer:
         # Handle other message types
         elif payload.get("id"):
             # Response to our request
+            try:
+                req_id = int(payload.get("id"))
+                fut = self._pending_rpc.get(req_id)
+                if fut and not fut.done():
+                    fut.set_result(payload)
+            except Exception:
+                pass
             # Fire-and-forget event emission
             asyncio.create_task(self.events.emit("response", payload))
 
@@ -462,6 +513,16 @@ class Relayer:
                 
                 if not self._connected:
                     break
+
+                # Actively keep the WS alive (relay may not send frames unless there's traffic).
+                if self._websocket:
+                    try:
+                        pong_waiter = await self._websocket.ping()
+                        await asyncio.wait_for(pong_waiter, timeout=10.0)
+                        self._last_heartbeat = asyncio.get_event_loop().time()
+                    except Exception:
+                        # fall back to timeout check below
+                        pass
                 
                 current_time = asyncio.get_event_loop().time()
                 if self._last_heartbeat:

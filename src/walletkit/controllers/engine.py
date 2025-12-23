@@ -82,8 +82,12 @@ class Engine(IWalletKitEngine):
         await result["acknowledged"]()
         topic = result["topic"]
         
-        # Get session (placeholder - will use proper store later)
-        return self.sign_client.session.get(topic, {})
+        # Get session from store
+        try:
+            return self.sign_client.session.get(topic)
+        except KeyError:
+            # Session may not be stored until wc_sessionSettle arrives; return at least the topic.
+            return {"topic": topic}
 
     async def reject_session(self, id: int, reason: Dict[str, Any]) -> None:
         """Reject session proposal.
@@ -287,29 +291,29 @@ class Engine(IWalletKitEngine):
 
     # ---------- Private ----------------------------------------------- #
 
-    def _on_session_request(self, event: Dict[str, Any]) -> None:
+    async def _on_session_request(self, event: Dict[str, Any]) -> None:
         """Handle session request event."""
-        self.client.events.emit("session_request", event)
+        await self.client.events.emit("session_request", event)
 
-    def _on_session_proposal(self, event: Dict[str, Any]) -> None:
+    async def _on_session_proposal(self, event: Dict[str, Any]) -> None:
         """Handle session proposal event."""
-        self.client.events.emit("session_proposal", event)
+        await self.client.events.emit("session_proposal", event)
 
-    def _on_session_delete(self, event: Dict[str, Any]) -> None:
+    async def _on_session_delete(self, event: Dict[str, Any]) -> None:
         """Handle session delete event."""
-        self.client.events.emit("session_delete", event)
+        await self.client.events.emit("session_delete", event)
 
-    def _on_proposal_expire(self, event: Dict[str, Any]) -> None:
+    async def _on_proposal_expire(self, event: Dict[str, Any]) -> None:
         """Handle proposal expire event."""
-        self.client.events.emit("proposal_expire", event)
+        await self.client.events.emit("proposal_expire", event)
 
-    def _on_session_request_expire(self, event: Dict[str, Any]) -> None:
+    async def _on_session_request_expire(self, event: Dict[str, Any]) -> None:
         """Handle session request expire event."""
-        self.client.events.emit("session_request_expire", event)
+        await self.client.events.emit("session_request_expire", event)
 
-    def _on_session_authenticate(self, event: Dict[str, Any]) -> None:
+    async def _on_session_authenticate(self, event: Dict[str, Any]) -> None:
         """Handle session authenticate event."""
-        self.client.events.emit("session_authenticate", event)
+        await self.client.events.emit("session_authenticate", event)
 
     def _set_event(
         self, event: Event, action: str
