@@ -77,8 +77,50 @@ python -m venv venv
 source venv/bin/activate
 
 # Install dependencies
+# Option 1: Install all dev dependencies
+pip install -e ".[all-dev]"
+
+# Option 2: Install specific groups
+pip install -e ".[dev,test]"  # Development and testing tools only
+
+# Option 3: Use requirements files (legacy, pyproject.toml is source of truth)
 pip install -r requirements-dev.txt
 pip install -e .
+```
+
+### Dependency Management
+
+**Single Source of Truth:** `pyproject.toml` is the authoritative source for all dependencies.
+
+- **Production dependencies**: Defined in `[project.dependencies]`
+- **Optional dependencies**: Organized into groups:
+  - `dev`: Development tools (black, flake8, isort, mypy)
+  - `test`: Testing tools (pytest, playwright, etc.)
+  - `docs`: Documentation tools (sphinx)
+  - `storage`: Storage backends (aiosqlite)
+  - `security`: Security auditing (pip-audit)
+  - `all-dev`: Meta-group including dev, test, docs, security
+
+**Version Policy:**
+- Dependencies use `>=` lower bounds with upper bounds (e.g., `>=11.0.0,<14.0.0`)
+- Upper bounds protect against breaking major version changes
+- Regular updates recommended for security and features
+
+**Security Monitoring:**
+- Run `pip-audit` regularly to check for vulnerabilities
+- Install with: `pip install -e ".[security]"` then run `pip-audit`
+- Consider setting up automated security scanning in CI/CD
+
+**Generating Locked Requirements:**
+```bash
+# Install pip-tools
+pip install pip-tools
+
+# Generate locked requirements.txt from pyproject.toml
+pip-compile pyproject.toml -o requirements.txt
+
+# Generate locked requirements-dev.txt
+pip-compile pyproject.toml --extra dev --extra test --extra docs --extra security -o requirements-dev.txt
 ```
 
 ### Running Tests

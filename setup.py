@@ -1,4 +1,8 @@
-"""Setup configuration for walletkit."""
+"""Setup configuration for walletkit.
+
+Note: Dependencies are defined in pyproject.toml, which is the single source of truth.
+This setup.py is kept minimal for compatibility. Modern setuptools reads from pyproject.toml.
+"""
 from setuptools import find_packages, setup
 
 # Read version from package __init__.py
@@ -22,12 +26,7 @@ setup(
     packages=find_packages(where="src"),
     package_dir={"": "src"},
     python_requires=">=3.8",
-    install_requires=[
-        "websockets>=11.0.0",
-        "cryptography>=41.0.0",
-        "aiohttp>=3.9.0",
-        "msgpack>=1.0.0",
-        "base58>=2.1.0",
-    ],
+    # Dependencies are defined in pyproject.toml [project.dependencies]
+    # This is the single source of truth for package dependencies
 )
 
