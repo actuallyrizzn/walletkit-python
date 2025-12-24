@@ -7,29 +7,9 @@ from walletkit.controllers.proposal_store import ProposalStore
 from walletkit.controllers.request_store import RequestStore
 from walletkit.controllers.session_store import SessionStore
 from walletkit.controllers.store import Store
-from walletkit.utils.storage import MemoryStorage
 
-
-@pytest.fixture
-def storage():
-    """Create storage instance."""
-    return MemoryStorage()
-
-
-@pytest.fixture
-def logger():
-    """Create logger instance."""
-    class SimpleLogger:
-        def info(self, msg: str) -> None:
-            pass
-
-        def debug(self, msg: str) -> None:
-            pass
-
-        def error(self, msg: str) -> None:
-            pass
-
-    return SimpleLogger()
+# Import shared fixtures
+pytest_plugins = ["tests.shared.fixtures"]
 
 
 @pytest.mark.asyncio

@@ -13,27 +13,6 @@ from walletkit.controllers.expirer import (
 )
 
 
-@pytest.fixture
-def storage():
-    """Create storage instance."""
-    from walletkit.utils.storage import MemoryStorage
-    return MemoryStorage()
-
-
-@pytest.fixture
-def logger():
-    """Create logger instance."""
-    class SimpleLogger:
-        def info(self, msg: str) -> None:
-            pass
-
-        def debug(self, msg: str) -> None:
-            pass
-
-        def error(self, msg: str) -> None:
-            pass
-
-    return SimpleLogger()
 
 
 @pytest.fixture
