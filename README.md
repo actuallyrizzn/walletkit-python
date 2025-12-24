@@ -109,7 +109,6 @@ walletkit-python/
 │   ├── unit/              # Unit tests
 │   └── integration/        # Integration tests (to be implemented)
 ├── docs/                   # ✅ Documentation
-├── js/                     # Original JavaScript source
 └── tmp/                    # Reference implementations
 ```
 
@@ -231,9 +230,8 @@ See `examples/` directory for complete runnable examples.
 
 See `docs/` folder for comprehensive documentation:
 - [API Reference](docs/API.md) - Complete API documentation
-- [Project Plan](docs/project-plan.md) - Complete project plan
-- [Research Findings](docs/research-findings.md) - Research and analysis
-- [Architecture Analysis](docs/architecture-analysis.md) - Codebase structure
+- [Usage Guide](docs/USAGE.md) - Usage examples and integration guides
+- [Wallet Setup](docs/WALLET_SETUP.md) - Wallet setup for integration testing
 
 ## Quick Reference
 
@@ -344,4 +342,6 @@ await dapp.engine.request({
 
 ## License
 
-Apache 2.0
+**Code**: Licensed under the GNU Affero General Public License v3.0 (AGPLv3). See [LICENSE](LICENSE) for details.
+
+**Documentation and other non-code materials**: Licensed under Creative Commons Attribution-ShareAlike 4.0 International (CC-BY-SA-4.0). See [LICENSE-DOCS](LICENSE-DOCS) for details.

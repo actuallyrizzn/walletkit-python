@@ -64,6 +64,10 @@ export WALLETCONNECT_PROJECT_ID="your-project-id"
 
 Or pass it directly in the examples.
 
+## License
+
+This documentation is licensed under the Creative Commons Attribution-ShareAlike 4.0 International License (CC-BY-SA-4.0). See [LICENSE-DOCS](../LICENSE-DOCS) for details.
+
 ## Running Examples
 
 All examples can be run directly:
