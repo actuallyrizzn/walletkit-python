@@ -2,29 +2,6 @@
 import pytest
 
 from walletkit.controllers.event_client import EventClient
-from walletkit.utils.storage import MemoryStorage
-
-
-@pytest.fixture
-def storage():
-    """Create storage instance."""
-    return MemoryStorage()
-
-
-@pytest.fixture
-def logger():
-    """Create logger instance."""
-    class SimpleLogger:
-        def info(self, msg: str) -> None:
-            pass
-
-        def debug(self, msg: str) -> None:
-            pass
-
-        def error(self, msg: str) -> None:
-            pass
-
-    return SimpleLogger()
 
 
 @pytest.fixture

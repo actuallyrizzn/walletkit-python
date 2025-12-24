@@ -3,29 +3,6 @@ import pytest
 import asyncio
 
 from walletkit.controllers.expirer import Expirer, EXPIRER_EVENTS, parse_expirer_target
-from walletkit.utils.storage import MemoryStorage
-
-
-@pytest.fixture
-def storage():
-    """Create storage instance."""
-    return MemoryStorage()
-
-
-@pytest.fixture
-def logger():
-    """Create logger instance."""
-    class SimpleLogger:
-        def info(self, msg: str) -> None:
-            pass
-
-        def debug(self, msg: str) -> None:
-            pass
-
-        def error(self, msg: str) -> None:
-            pass
-
-    return SimpleLogger()
 
 
 @pytest.fixture
