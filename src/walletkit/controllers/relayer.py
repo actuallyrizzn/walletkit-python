@@ -8,6 +8,8 @@ from urllib.parse import urlparse, parse_qs, urlencode, urlunparse
 import websockets
 from websockets.client import WebSocketClientProtocol
 
+from walletkit.types.core import ICore
+from walletkit.types.logger import Logger
 from walletkit.utils.events import EventEmitter
 from walletkit.utils.jsonrpc import format_jsonrpc_request, get_big_int_rpc_id
 
@@ -17,8 +19,8 @@ class Relayer:
 
     def __init__(
         self,
-        core: Any,  # ICore
-        logger: Any,  # Logger
+        core: ICore,
+        logger: Logger,
         relay_url: Optional[str] = None,
         project_id: Optional[str] = None,
         origin: Optional[str] = None,

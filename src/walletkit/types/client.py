@@ -2,7 +2,30 @@
 from abc import ABC, abstractmethod
 from typing import Any, Dict, Literal, Optional, Protocol, TypedDict
 
+from walletkit.types.core import ICore
+from walletkit.types.logger import Logger
 from walletkit.utils.events import EventEmitter
+
+# Re-export for backward compatibility
+__all__ = [
+    "BaseEventArgs",
+    "Event",
+    "EventArguments",
+    "IWalletKit",
+    "INotifications",
+    "Metadata",
+    "Options",
+    "ProposalExpire",
+    "ProposalParams",
+    "RequestParams",
+    "AuthParams",
+    "SessionAuthenticate",
+    "SessionDelete",
+    "SessionProposal",
+    "SessionRequest",
+    "SessionRequestExpire",
+    "SignConfig",
+]
 
 # Event types
 Event = Literal[
@@ -35,13 +58,85 @@ class SessionRequestExpire(TypedDict):
     id: int
 
 
-# Type aliases for complex types (will be defined more fully later)
-SessionRequest = Dict[str, Any]  # TODO: Define properly
-SessionProposal = Dict[str, Any]  # TODO: Define properly
-SessionDelete = Dict[str, Any]  # TODO: Define properly
-SessionAuthenticate = Dict[str, Any]  # TODO: Define properly
-SignConfig = Optional[Dict[str, Any]]  # TODO: Define properly
-Metadata = Dict[str, Any]  # TODO: Define properly
+# TypedDict definitions for WalletConnect protocol types
+
+
+class Metadata(TypedDict):
+    """Wallet/DApp metadata following WalletConnect spec."""
+
+    name: str
+    description: str
+    url: str
+    icons: list[str]
+
+
+class ProposalParams(TypedDict, total=False):
+    """Session proposal parameters."""
+
+    id: int
+    proposer: Dict[str, Any]
+    requiredNamespaces: Dict[str, Any]
+    optionalNamespaces: Optional[Dict[str, Any]]
+    relays: list[Dict[str, Any]]
+    pairingTopic: Optional[str]
+
+
+class SessionProposal(TypedDict, total=False):
+    """Session proposal event data."""
+
+    id: int
+    topic: str
+    params: ProposalParams
+
+
+class RequestParams(TypedDict, total=False):
+    """Session request parameters."""
+
+    request: Dict[str, Any]
+    chainId: Optional[str]
+
+
+class SessionRequest(TypedDict, total=False):
+    """Session request event data."""
+
+    id: int
+    topic: str
+    params: RequestParams
+
+
+class SessionDelete(TypedDict, total=False):
+    """Session delete event data."""
+
+    id: int
+    topic: str
+
+
+class AuthParams(TypedDict, total=False):
+    """Session authenticate parameters."""
+
+    requester: Dict[str, Any]
+    authPayload: Dict[str, Any]
+    cached: Optional[bool]
+
+
+class SessionAuthenticate(TypedDict, total=False):
+    """Session authenticate event data."""
+
+    id: int
+    topic: str
+    params: AuthParams
+
+
+class SignConfig(TypedDict, total=False):
+    """Sign configuration options.
+    
+    Note: This TypedDict allows additional fields beyond those defined here.
+    Use Dict[str, Any] for full flexibility if needed.
+    """
+
+    disableRequestQueue: Optional[bool]
+    maxRequestQueueSize: Optional[int]
+    requestTimeout: Optional[int]
 
 
 class EventArguments(TypedDict, total=False):
@@ -58,7 +153,7 @@ class EventArguments(TypedDict, total=False):
 class Options(TypedDict, total=False):
     """WalletKit initialization options."""
 
-    core: Any  # ICore - will define properly later
+    core: ICore
     metadata: Metadata
     name: Optional[str]
     signConfig: Optional[SignConfig]
@@ -93,8 +188,8 @@ class IWalletKit(ABC):
     name: str  # Not a property, just an attribute
     engine: Any  # IWalletKitEngine
     events: EventEmitter
-    logger: Any  # Logger
-    core: Any  # ICore
+    logger: Logger
+    core: ICore
     metadata: Metadata
     sign_config: Optional[SignConfig]
 
