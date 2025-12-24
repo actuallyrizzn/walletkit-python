@@ -1,10 +1,11 @@
 # Production dependencies
-websockets>=11.0.0          # WebSocket support
-cryptography>=41.0.0         # Crypto operations
-aiohttp>=3.9.0               # HTTP client
-msgpack>=1.0.0               # MessagePack serialization
-base58>=2.1.0                # Base58 encoding
+# Note: This file can be generated from pyproject.toml using pip-compile:
+#   pip install pip-tools
+#   pip-compile pyproject.toml -o requirements.txt
+# For now, it mirrors the dependencies in pyproject.toml with upper bounds
+websockets>=11.0.0,<14.0.0          # WebSocket support for WalletConnect relay
+cryptography>=41.0.0,<44.0.0         # Cryptographic operations (X25519, Ed25519, ChaCha20Poly1305, HKDF)
 
 # Optional but recommended
-aiosqlite>=0.19.0            # SQLite storage backend
+aiosqlite>=0.19.0,<0.20.0            # SQLite storage backend (install with: pip install walletkit[storage])
 

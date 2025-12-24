@@ -1,29 +1,32 @@
-# Testing
+# Development dependencies
+# Note: This file lists all dev dependencies. For organized groups, see pyproject.toml
+# Install with: pip install -e ".[dev,test,docs,security]" or pip install -e ".[all-dev]"
+#
+# Alternatively, generate this file from pyproject.toml using:
+#   pip install pip-tools
+#   pip-compile pyproject.toml --extra dev --extra test --extra docs --extra security -o requirements-dev.txt
+
+# Development tools (code formatting, linting, type checking)
+black>=23.7.0
+flake8>=6.1.0
+isort>=5.12.0
+mypy>=1.5.0
+
+# Testing tools
 pytest>=7.4.0
 pytest-asyncio>=0.21.0
 pytest-cov>=4.1.0
 pytest-mock>=3.11.0
-
-# Browser Automation (for integration testing with web apps)
 playwright>=1.40.0
-
-# QR Code handling (for WalletConnect URI extraction)
 qrcode[pil]>=7.4.2
 pillow>=10.0.0
-
-# Ethereum signing (for wallet message signing - REQUIRED for venice.ai)
 eth-account>=0.8.0
-
-# Code Quality
-black>=23.7.0
-flake8>=6.1.0
-mypy>=1.5.0
-isort>=5.12.0
-
-# Type Stubs
 types-requests>=2.31.0
 
-# Documentation
+# Documentation tools
 sphinx>=7.1.0
 sphinx-rtd-theme>=1.3.0
+
+# Security auditing
+pip-audit>=2.6.0
 
