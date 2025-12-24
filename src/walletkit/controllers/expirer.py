@@ -3,6 +3,7 @@ import asyncio
 import time
 from typing import Any, Callable, Dict, List, Optional
 
+from walletkit.types.logger import Logger
 from walletkit.utils.events import EventEmitter
 from walletkit.utils.storage import IKeyValueStorage
 
@@ -102,7 +103,7 @@ class Expirer:
     def __init__(
         self,
         storage: IKeyValueStorage,
-        logger: Any,
+        logger: Logger,
         storage_prefix: str = "wc@2:core:",
         storage_version: str = EXPIRER_STORAGE_VERSION,
     ) -> None:

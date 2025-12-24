@@ -9,6 +9,7 @@ from walletkit.controllers.expirer import EXPIRER_EVENTS, parse_expirer_target
 from walletkit.controllers.proposal_store import ProposalStore
 from walletkit.controllers.request_store import RequestStore
 from walletkit.controllers.session_store import SessionStore
+from walletkit.types.core import ICore
 from walletkit.utils.crypto_utils import hash_key
 from walletkit.utils.events import EventEmitter
 from walletkit.utils.jsonrpc import (
@@ -24,7 +25,7 @@ class SignClient:
 
     def __init__(
         self,
-        core: Any,  # ICore
+        core: ICore,
         metadata: Dict[str, Any],
         sign_config: Optional[Dict[str, Any]] = None,
     ) -> None:
@@ -59,7 +60,7 @@ class SignClient:
     @classmethod
     async def init(
         cls,
-        core: Any,
+        core: ICore,
         metadata: Dict[str, Any],
         sign_config: Optional[Dict[str, Any]] = None,
     ) -> "SignClient":
