@@ -262,12 +262,13 @@ async def test_relayer_publish_not_connected_auto_connect(relayer):
 async def test_relayer_publish_with_retry(relayer):
     """Test publish with retry logic."""
     await relayer.init()
-    
-    mock_websocket = AsyncMock()
-    mock_websocket.send = AsyncMock(side_effect=[Exception("Fail"), Exception("Fail"), None])
-    relayer._websocket = mock_websocket
+
+    # publish() uses relayer.request("irn_publish", ...) which awaits a JSON-RPC response.
+    # Unit test should mock request(), not websocket.send(), otherwise it will wait for timeout.
+    relayer._websocket = AsyncMock()
     relayer._connected = True
     relayer._initialized = True
+    relayer.request = AsyncMock(side_effect=[Exception("Fail"), Exception("Fail"), {"id": 1, "result": True}])
     
     topic = "test_topic"
     message = '{"test": "message"}'
@@ -276,19 +277,18 @@ async def test_relayer_publish_with_retry(relayer):
         await relayer.publish(topic, message, opts={"max_retries": 3, "retry_delay": 0.01})
     
     # Should have succeeded after retries
-    assert mock_websocket.send.call_count == 3
+    assert relayer.request.call_count == 3
 
 
 @pytest.mark.asyncio
 async def test_relayer_publish_retry_exhausted(relayer):
     """Test publish when all retries are exhausted."""
     await relayer.init()
-    
-    mock_websocket = AsyncMock()
-    mock_websocket.send = AsyncMock(side_effect=Exception("Always fails"))
-    relayer._websocket = mock_websocket
+
+    relayer._websocket = AsyncMock()
     relayer._connected = True
     relayer._initialized = True
+    relayer.request = AsyncMock(side_effect=Exception("Always fails"))
     
     topic = "test_topic"
     message = '{"test": "message"}'
