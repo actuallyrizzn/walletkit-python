@@ -74,7 +74,7 @@ async def test_expirer_init(expirer):
 @pytest.mark.asyncio
 async def test_expirer_set_get(expirer):
     """Test setting and getting expirations."""
-    expiry = int(time.time() * 1000) + 10000  # 10 seconds from now
+    expiry = int(time.time()) + 10  # 10 seconds from now
     
     expirer.set("topic1", expiry)
     assert expirer.length == 1
@@ -88,7 +88,7 @@ async def test_expirer_set_get(expirer):
 @pytest.mark.asyncio
 async def test_expirer_delete(expirer):
     """Test deleting expirations."""
-    expiry = int(time.time() * 1000) + 10000
+    expiry = int(time.time()) + 10
     
     expirer.set("topic1", expiry)
     assert expirer.length == 1
@@ -102,7 +102,7 @@ async def test_expirer_delete(expirer):
 async def test_expirer_expiry(expirer):
     """Test expiration expiry."""
     # Set expiration in the past
-    expiry = int(time.time() * 1000) - 1000  # 1 second ago
+    expiry = int(time.time()) - 1  # 1 second ago
     
     expired_event = None
     event_received = asyncio.Event()
@@ -136,7 +136,7 @@ async def test_expirer_persistence(storage, logger):
     exp1 = Expirer(storage, logger)
     await exp1.init()
     
-    expiry = int(time.time() * 1000) + 10000
+    expiry = int(time.time()) + 10
     exp1.set("topic1", expiry)
     exp1.set(42, expiry)
     
@@ -192,7 +192,7 @@ async def test_expirer_has_with_exception(expirer):
 @pytest.mark.asyncio
 async def test_expirer_values_property(expirer):
     """Test values property."""
-    expiry = int(time.time() * 1000) + 10000
+    expiry = int(time.time()) + 10
     expirer.set("topic1", expiry)
     expirer.set("topic2", expiry)
     
@@ -271,7 +271,7 @@ async def test_expirer_restore_with_existing_data(storage, logger):
     exp1 = Expirer(storage, logger)
     await exp1.init()
     
-    expiry = int(time.time() * 1000) + 10000
+    expiry = int(time.time()) + 10
     exp1.set("topic1", expiry)
     await asyncio.sleep(0.2)  # Wait for persistence
     

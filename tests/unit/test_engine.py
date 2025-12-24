@@ -400,25 +400,25 @@ async def test_engine_event_forwarding(engine):
     
     # Test event emission
     mock_client = engine.client
-    mock_client.events.emit = MagicMock()
+    mock_client.events.emit = AsyncMock()
     
     # Trigger the event handler
-    engine._on_session_proposal({"id": 1})
+    await engine._on_session_proposal({"id": 1})
     mock_client.events.emit.assert_called_with("session_proposal", {"id": 1})
     
-    engine._on_session_request({"id": 1})
+    await engine._on_session_request({"id": 1})
     mock_client.events.emit.assert_called_with("session_request", {"id": 1})
     
-    engine._on_session_delete({"topic": "test"})
+    await engine._on_session_delete({"topic": "test"})
     mock_client.events.emit.assert_called_with("session_delete", {"topic": "test"})
     
-    engine._on_proposal_expire({"id": 1})
+    await engine._on_proposal_expire({"id": 1})
     mock_client.events.emit.assert_called_with("proposal_expire", {"id": 1})
     
-    engine._on_session_request_expire({"id": 1})
+    await engine._on_session_request_expire({"id": 1})
     mock_client.events.emit.assert_called_with("session_request_expire", {"id": 1})
     
-    engine._on_session_authenticate({"id": 1})
+    await engine._on_session_authenticate({"id": 1})
     mock_client.events.emit.assert_called_with("session_authenticate", {"id": 1})
 
 

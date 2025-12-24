@@ -40,7 +40,7 @@ async def expirer(storage, logger):
 async def test_expirer_set_get(expirer):
     """Test setting and getting expirations."""
     import time
-    expiry = int(time.time() * 1000) + 1000
+    expiry = int(time.time()) + 1
     
     expirer.set("test_target", expiry)
     
@@ -54,7 +54,7 @@ async def test_expirer_set_get(expirer):
 async def test_expirer_delete(expirer):
     """Test deleting expirations."""
     import time
-    expiry = int(time.time() * 1000) + 1000
+    expiry = int(time.time()) + 1
     
     expirer.set("test_target", expiry)
     assert expirer.has("test_target")
@@ -67,7 +67,7 @@ async def test_expirer_delete(expirer):
 async def test_expirer_length(expirer):
     """Test expirer length property."""
     import time
-    expiry = int(time.time() * 1000) + 1000
+    expiry = int(time.time()) + 1
     
     assert expirer.length == 0
     
@@ -103,8 +103,8 @@ async def test_parse_expirer_target():
 async def test_expirer_get_all(expirer):
     """Test getting all expirations via keys."""
     import time
-    expiry1 = int(time.time() * 1000) + 1000
-    expiry2 = int(time.time() * 1000) + 2000
+    expiry1 = int(time.time()) + 1
+    expiry2 = int(time.time()) + 2
     
     expirer.set("target1", expiry1)
     expirer.set("target2", expiry2)

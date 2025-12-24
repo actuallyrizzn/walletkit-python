@@ -20,6 +20,11 @@ async def core(storage):
     """Create and initialize core."""
     core = Core(storage=storage)
     await core.start()
+    # Avoid network access in SignClient unit tests
+    core.relayer.connect = AsyncMock()
+    core.relayer.subscribe = AsyncMock(return_value="sub_id")
+    core.relayer.unsubscribe = AsyncMock()
+    core.relayer.publish = AsyncMock()
     return core
 
 
@@ -70,7 +75,7 @@ async def test_sign_client_approve_reject(sign_client):
     
     # Test reject (will try to encode, so we need crypto setup)
     # Mock the relayer publish to avoid actual network calls
-    async def mock_publish(topic, message):
+    async def mock_publish(topic, message, opts=None):
         pass
     
     original_publish = sign_client.core.relayer.publish
@@ -126,7 +131,7 @@ async def test_sign_client_disconnect(sign_client):
     sign_client.core.expirer.set(topic, session["expiry"])
     
     # Mock relayer publish
-    async def mock_publish(t, m):
+    async def mock_publish(t, m, opts=None):
         pass
     
     original_publish = sign_client.core.relayer.publish
@@ -153,7 +158,7 @@ async def test_sign_client_expirer_integration(sign_client):
     # Create a session with expiry
     topic = "expiry_test_topic"
     import time
-    expiry = int(time.time() * 1000) + 1000  # 1 second from now
+    expiry = int(time.time()) + 1  # 1 second from now
     
     session = {
         "topic": topic,
@@ -169,7 +174,7 @@ async def test_sign_client_expirer_integration(sign_client):
     
     # Create a proposal with expiry
     proposal_id = 456
-    proposal_expiry = int(time.time() * 1000) + 1000
+    proposal_expiry = int(time.time()) + 1
     proposal = {
         "id": proposal_id,
         "topic": "proposal_topic",
@@ -222,6 +227,9 @@ async def test_sign_client_approve_session_authenticate(sign_client):
         },
         "requester": {"metadata": {}},
     }
+    # requester.publicKey is required by SignClient to derive the auth response topic
+    from walletkit.utils.crypto_utils import generate_key_pair
+    auth_params["requester"]["publicKey"] = generate_key_pair()["publicKey"]
     
     # Set up crypto for the topic
     from walletkit.utils.crypto_utils import generate_random_bytes32
@@ -261,8 +269,9 @@ async def test_sign_client_approve_session_authenticate(sign_client):
         })
         
         assert "session" in result
-        assert result["session"]["topic"] == auth_topic
-        assert sign_client.session.has(auth_topic)
+        assert isinstance(result["session"]["topic"], str)
+        assert len(result["session"]["topic"]) == 64
+        assert sign_client.session.has(result["session"]["topic"])
         sign_client.core.relayer.publish.assert_awaited_once()
         assert auth_id not in sign_client._pending_auth_requests
     finally:
@@ -282,7 +291,10 @@ async def test_sign_client_reject_session_authenticate(sign_client):
             "domain": "example.com",
             "chains": ["eip155:1"],
         },
+        "requester": {"metadata": {}},
     }
+    from walletkit.utils.crypto_utils import generate_key_pair
+    auth_params["requester"]["publicKey"] = generate_key_pair()["publicKey"]
     
     # Set up crypto for the topic
     from walletkit.utils.crypto_utils import generate_random_bytes32
@@ -347,9 +359,12 @@ async def test_sign_client_approve_success(sign_client):
             "requiredNamespaces": {"eip155": {"chains": ["eip155:1"]}},
         },
     }
+    # proposer.publicKey is required by SignClient to derive the session topic
+    from walletkit.utils.crypto_utils import generate_key_pair
+    proposal["params"]["proposer"]["publicKey"] = generate_key_pair()["publicKey"]
     await sign_client.proposal.set(proposal_id, proposal)
     
-    async def mock_publish(t, m):
+    async def mock_publish(t, m, opts=None):
         pass
     
     original_publish = sign_client.core.relayer.publish
@@ -363,7 +378,8 @@ async def test_sign_client_approve_success(sign_client):
         
         assert "topic" in result
         assert "acknowledged" in result
-        assert result["topic"] == topic
+        assert isinstance(result["topic"], str)
+        assert len(result["topic"]) == 64
     finally:
         sign_client.core.relayer.publish = original_publish
 
@@ -413,7 +429,7 @@ async def test_sign_client_update_success(sign_client):
     }
     await sign_client.session.set(topic, session)
     
-    async def mock_publish(t, m):
+    async def mock_publish(t, m, opts=None):
         pass
     
     original_publish = sign_client.core.relayer.publish
@@ -449,14 +465,14 @@ async def test_sign_client_extend_success(sign_client):
     import time
     session = {
         "topic": topic,
-        "expiry": int(time.time() * 1000) + 10000,
+        "expiry": int(time.time()) + 10000,
         "namespaces": {},
         "peer": {},
     }
     await sign_client.session.set(topic, session)
     sign_client.core.expirer.set(topic, session["expiry"])
     
-    async def mock_publish(t, m):
+    async def mock_publish(t, m, opts=None):
         pass
     
     original_publish = sign_client.core.relayer.publish
@@ -499,7 +515,7 @@ async def test_sign_client_respond_success(sign_client):
         "request": {"id": request_id, "method": "eth_sendTransaction"},
     })
     
-    async def mock_publish(t, m):
+    async def mock_publish(t, m, opts=None):
         pass
     
     original_publish = sign_client.core.relayer.publish
@@ -554,7 +570,7 @@ async def test_sign_client_emit_success(sign_client):
     sym_key = generate_random_bytes32()
     await sign_client.core.crypto.set_sym_key(sym_key, override_topic=topic)
     
-    async def mock_publish(t, m):
+    async def mock_publish(t, m, opts=None):
         pass
     
     original_publish = sign_client.core.relayer.publish
@@ -602,7 +618,7 @@ async def test_sign_client_handle_session_settle(sign_client):
     topic = "session_topic"
     
     import time
-    expiry = int(time.time() * 1000) + 10000
+    expiry = int(time.time()) + 10000
     
     params = {
         "session": {
@@ -695,7 +711,7 @@ async def test_sign_client_handle_session_extend(sign_client):
     topic = "session_topic"
     
     import time
-    expiry = int(time.time() * 1000) + 10000
+    expiry = int(time.time()) + 10000
     
     session = {
         "topic": topic,
@@ -706,7 +722,7 @@ async def test_sign_client_handle_session_extend(sign_client):
     await sign_client.session.set(topic, session)
     sign_client.core.expirer.set(topic, expiry)
     
-    new_expiry = int(time.time() * 1000) + 20000
+    new_expiry = int(time.time()) + 20000
     params = {"expiry": new_expiry}
     
     ack_called = False
@@ -928,7 +944,7 @@ async def test_sign_client_expirer_handles_session_expiry(sign_client):
     topic = "expiry_topic"
     
     import time
-    expiry = int(time.time() * 1000) - 1000  # Already expired
+    expiry = int(time.time()) - 1  # Already expired
     
     session = {
         "topic": topic,
@@ -1073,10 +1089,13 @@ async def test_sign_client_acknowledged_callback(sign_client):
         "topic": topic,
         "params": {
             "requiredNamespaces": {
-                "eip155": {"chains": ["1"], "methods": [], "events": []}
+                "eip155": {"chains": ["eip155:1"], "methods": [], "events": []}
             },
+            "proposer": {"metadata": {}},
         },
     }
+    from walletkit.utils.crypto_utils import generate_key_pair
+    proposal["params"]["proposer"]["publicKey"] = generate_key_pair()["publicKey"]
     await sign_client.proposal.set(proposal_id, proposal)
     
     # Set up sym key for the topic
@@ -1088,7 +1107,7 @@ async def test_sign_client_acknowledged_callback(sign_client):
     result = await sign_client.approve({
         "id": proposal_id,
         "namespaces": {
-            "eip155": {"chains": ["1"], "methods": [], "events": []}
+            "eip155": {"chains": ["eip155:1"], "methods": [], "events": []}
         },
     })
     

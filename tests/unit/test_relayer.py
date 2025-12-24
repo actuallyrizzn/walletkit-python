@@ -11,6 +11,35 @@ from walletkit.core import Core
 from walletkit.utils.storage import MemoryStorage
 
 
+async def _empty_async_iterator():
+    """An async iterator that yields nothing (valid for `async for`)."""
+    if False:  # pragma: no cover
+        yield ""
+
+
+class _DummyWebSocket:
+    """Minimal websocket stub implementing the async-iterator protocol correctly."""
+
+    def __init__(self, messages=None):
+        self._messages = list(messages or [])
+        self.send = AsyncMock()
+        self.close = AsyncMock()
+        # Relayer heartbeat does: pong_waiter = await ws.ping(); await pong_waiter
+        self.ping = AsyncMock(side_effect=lambda: asyncio.sleep(0))
+
+    def __aiter__(self):
+        async def _gen():
+            for m in self._messages:
+                yield m
+
+        return _gen()
+
+
+def _make_mock_websocket(messages=None) -> _DummyWebSocket:
+    """Create a websocket stub with correct async-iterator behavior."""
+    return _DummyWebSocket(messages=messages)
+
+
 @pytest.fixture
 def storage():
     """Create storage instance."""
@@ -81,8 +110,7 @@ async def test_relayer_connect_success(relayer):
     await relayer.init()
     
     # Mock websocket connection
-    mock_websocket = AsyncMock()
-    mock_websocket.__aiter__ = AsyncMock(return_value=iter([]))
+    mock_websocket = _make_mock_websocket()
     
     with patch("walletkit.controllers.relayer.websockets.connect", new_callable=AsyncMock) as mock_connect:
         mock_connect.return_value = mock_websocket
@@ -93,6 +121,7 @@ async def test_relayer_connect_success(relayer):
         assert not relayer.connecting
         assert relayer._websocket is not None
         mock_connect.assert_called_once()
+        await relayer.disconnect()
 
 
 @pytest.mark.asyncio
@@ -100,8 +129,7 @@ async def test_relayer_connect_with_project_id(relayer):
     """Test connection with project ID in URL."""
     await relayer.init()
     
-    mock_websocket = AsyncMock()
-    mock_websocket.__aiter__ = AsyncMock(return_value=iter([]))
+    mock_websocket = _make_mock_websocket()
     
     with patch("walletkit.controllers.relayer.websockets.connect", new_callable=AsyncMock) as mock_connect:
         mock_connect.return_value = mock_websocket
@@ -111,6 +139,7 @@ async def test_relayer_connect_with_project_id(relayer):
         # Check that URL includes project ID
         call_args = mock_connect.call_args[0][0]
         assert "projectId=test-project-id" in call_args
+        await relayer.disconnect()
 
 
 @pytest.mark.asyncio
@@ -118,7 +147,10 @@ async def test_relayer_connect_timeout(relayer):
     """Test connection timeout."""
     await relayer.init()
     
-    with patch("walletkit.controllers.relayer.websockets.connect", new_callable=AsyncMock) as mock_connect:
+    with (
+        patch("walletkit.controllers.relayer.websockets.connect", new_callable=AsyncMock) as mock_connect,
+        patch.object(relayer, "_start_reconnect", new_callable=AsyncMock) as mock_start_reconnect,
+    ):
         mock_connect.side_effect = asyncio.TimeoutError()
         
         with pytest.raises(TimeoutError):
@@ -126,6 +158,7 @@ async def test_relayer_connect_timeout(relayer):
         
         assert not relayer.connected
         assert not relayer.connecting
+        mock_start_reconnect.assert_called_once()
 
 
 @pytest.mark.asyncio
@@ -133,7 +166,10 @@ async def test_relayer_connect_failure(relayer):
     """Test connection failure."""
     await relayer.init()
     
-    with patch("walletkit.controllers.relayer.websockets.connect", new_callable=AsyncMock) as mock_connect:
+    with (
+        patch("walletkit.controllers.relayer.websockets.connect", new_callable=AsyncMock) as mock_connect,
+        patch.object(relayer, "_start_reconnect", new_callable=AsyncMock) as mock_start_reconnect,
+    ):
         mock_connect.side_effect = Exception("Connection failed")
         
         with pytest.raises(Exception, match="Connection failed"):
@@ -141,6 +177,7 @@ async def test_relayer_connect_failure(relayer):
         
         assert not relayer.connected
         assert not relayer.connecting
+        mock_start_reconnect.assert_called_once()
 
 
 @pytest.mark.asyncio
@@ -161,8 +198,7 @@ async def test_relayer_connect_with_custom_url(relayer):
     await relayer.init()
     
     custom_url = "wss://custom-relay.com"
-    mock_websocket = AsyncMock()
-    mock_websocket.__aiter__ = AsyncMock(return_value=iter([]))
+    mock_websocket = _make_mock_websocket()
     
     with patch("walletkit.controllers.relayer.websockets.connect", new_callable=AsyncMock) as mock_connect:
         mock_connect.return_value = mock_websocket
@@ -171,6 +207,7 @@ async def test_relayer_connect_with_custom_url(relayer):
         
         assert relayer.relay_url == custom_url
         mock_connect.assert_called_once()
+        await relayer.disconnect()
 
 
 @pytest.mark.asyncio
@@ -214,19 +251,24 @@ async def test_relayer_publish_success(relayer):
     await relayer.init()
     
     # Set up connected state
-    mock_websocket = AsyncMock()
-    mock_websocket.send = AsyncMock()
-    relayer._websocket = mock_websocket
     relayer._connected = True
     relayer._initialized = True
+    relayer._websocket = _make_mock_websocket()
+    relayer.request = AsyncMock(return_value=True)
     
     topic = "test_topic"
     message = '{"test": "message"}'
     
     await relayer.publish(topic, message)
     
-    # Verify send was called
-    assert mock_websocket.send.called
+    relayer.request.assert_called_once()
+    method, params = relayer.request.call_args[0]
+    assert method == "irn_publish"
+    assert params["topic"] == topic
+    assert params["message"] == message
+    assert params["ttl"] == 6 * 60 * 60
+    assert params["prompt"] is False
+    assert params["tag"] == 0
 
 
 @pytest.mark.asyncio
@@ -241,21 +283,19 @@ async def test_relayer_publish_not_connected_auto_connect(relayer):
     """Test publish auto-connects when not connected."""
     await relayer.init()
     
-    mock_websocket = AsyncMock()
-    mock_websocket.send = AsyncMock()
-    mock_websocket.__aiter__ = AsyncMock(return_value=iter([]))
+    # publish() uses request(); verify it triggers connect when disconnected.
+    relayer._connected = False
+    relayer._websocket = None
+    relayer.connect = AsyncMock()
+    relayer.request = AsyncMock(return_value=True)
+        
+    topic = "test_topic"
+    message = '{"test": "message"}'
     
-    with patch("walletkit.controllers.relayer.websockets.connect", new_callable=AsyncMock) as mock_connect:
-        mock_connect.return_value = mock_websocket
-        
-        topic = "test_topic"
-        message = '{"test": "message"}'
-        
-        await relayer.publish(topic, message)
-        
-        # Should have connected
-        assert relayer.connected
-        mock_connect.assert_called_once()
+    await relayer.publish(topic, message)
+    
+    relayer.connect.assert_called_once()
+    relayer.request.assert_called_once()
 
 
 @pytest.mark.asyncio
@@ -299,32 +339,16 @@ async def test_relayer_publish_retry_exhausted(relayer):
 
 
 @pytest.mark.asyncio
-async def test_relayer_publish_queue_when_not_connected(relayer):
-    """Test publish queues message when not connected."""
+async def test_relayer_send_queues_when_no_websocket(relayer):
+    """Test _send queues message when websocket is unavailable."""
     await relayer.init()
     relayer._initialized = True
     relayer._websocket = None
     relayer._connected = False
     
-    # Mock connect to avoid actual connection
-    original_connect = relayer.connect
-    async def mock_connect():
-        # Simulate connection failure to test queueing
-        relayer._connected = False
-        relayer._websocket = None
-    
-    relayer.connect = mock_connect
-    
-    topic = "test_topic"
-    message = '{"test": "message"}'
-    
-    try:
-        # Should queue message when connection fails
-        await relayer.publish(topic, message)
-        # Message should be in queue since connection failed
-        assert len(relayer._message_queue) > 0
-    finally:
-        relayer.connect = original_connect
+    payload = {"id": 1, "jsonrpc": "2.0", "method": "irn_publish", "params": {"topic": "t", "message": "m"}}
+    await relayer._send(payload)
+    assert relayer._message_queue == [payload]
 
 
 @pytest.mark.asyncio
@@ -332,11 +356,10 @@ async def test_relayer_subscribe_success(relayer):
     """Test successful subscription."""
     await relayer.init()
     
-    mock_websocket = AsyncMock()
-    mock_websocket.send = AsyncMock()
-    relayer._websocket = mock_websocket
     relayer._connected = True
     relayer._initialized = True
+    relayer._websocket = _make_mock_websocket()
+    relayer.request = AsyncMock(return_value="sub-1")
     
     topic = "test_topic"
     subscription_id = await relayer.subscribe(topic)
@@ -344,6 +367,7 @@ async def test_relayer_subscribe_success(relayer):
     assert subscription_id is not None
     assert topic in relayer._subscribed_topics
     assert relayer._subscribed_topics[topic] == subscription_id
+    relayer.request.assert_called_once_with("irn_subscribe", {"topic": topic})
 
 
 @pytest.mark.asyncio
@@ -351,11 +375,10 @@ async def test_relayer_subscribe_already_subscribed(relayer):
     """Test subscribing to already subscribed topic."""
     await relayer.init()
     
-    mock_websocket = AsyncMock()
-    mock_websocket.send = AsyncMock()
-    relayer._websocket = mock_websocket
     relayer._connected = True
     relayer._initialized = True
+    relayer._websocket = _make_mock_websocket()
+    relayer.request = AsyncMock(return_value="sub-1")
     
     topic = "test_topic"
     subscription_id1 = await relayer.subscribe(topic)
@@ -363,6 +386,7 @@ async def test_relayer_subscribe_already_subscribed(relayer):
     
     # Should return same subscription ID
     assert subscription_id1 == subscription_id2
+    relayer.request.assert_called_once_with("irn_subscribe", {"topic": topic})
 
 
 @pytest.mark.asyncio
@@ -377,11 +401,10 @@ async def test_relayer_unsubscribe_success(relayer):
     """Test successful unsubscription."""
     await relayer.init()
     
-    mock_websocket = AsyncMock()
-    mock_websocket.send = AsyncMock()
-    relayer._websocket = mock_websocket
     relayer._connected = True
     relayer._initialized = True
+    relayer._websocket = _make_mock_websocket()
+    relayer.request = AsyncMock(return_value=True)
     
     topic = "test_topic"
     await relayer.subscribe(topic)
@@ -389,6 +412,8 @@ async def test_relayer_unsubscribe_success(relayer):
     await relayer.unsubscribe(topic)
     
     assert topic not in relayer._subscribed_topics
+    # One call for subscribe, one for unsubscribe
+    assert relayer.request.call_count == 2
 
 
 @pytest.mark.asyncio
@@ -482,9 +507,7 @@ async def test_relayer_receive_messages_invalid_json(relayer):
     await relayer.init()
     
     messages = ['invalid json']
-    mock_websocket = AsyncMock()
-    mock_websocket.__aiter__ = AsyncMock(return_value=iter(messages))
-    relayer._websocket = mock_websocket
+    relayer._websocket = _make_mock_websocket(messages=messages)
     relayer._connected = True
     
     # Should not raise error, just log
@@ -609,8 +632,7 @@ async def test_relayer_reconnect_loop(relayer):
     relayer._connected = False
     relayer._reconnect_attempts = 0
     
-    mock_websocket = AsyncMock()
-    mock_websocket.__aiter__ = AsyncMock(return_value=iter([]))
+    mock_websocket = _make_mock_websocket()
     
     connect_count = 0
     
@@ -810,13 +832,20 @@ async def test_relayer_subscribe_auto_connect(relayer):
     await relayer.init()
     
     relayer._connected = False
-    relayer.connect = AsyncMock()
-    relayer._send = AsyncMock(return_value="sub_id")
+    relayer._websocket = None
+
+    async def _mock_connect():
+        relayer._connected = True
+        relayer._websocket = _make_mock_websocket()
+
+    relayer.connect = AsyncMock(side_effect=_mock_connect)
+    relayer.request = AsyncMock(return_value="sub_id")
     
     result = await relayer.subscribe("test_topic")
     
     relayer.connect.assert_called_once()
     assert isinstance(result, str)  # Subscription ID is a string
+    relayer.request.assert_called_once_with("irn_subscribe", {"topic": "test_topic"})
 
 
 @pytest.mark.asyncio
@@ -835,14 +864,7 @@ async def test_relayer_receive_messages_handle_error(relayer):
     """Test _receive_messages error handling."""
     await relayer.init()
     
-    async def error_generator():
-        yield '{"test": "message"}'
-        raise Exception("Handle error")
-        yield  # Never reached
-    
-    mock_websocket = AsyncMock()
-    mock_websocket.__aiter__ = lambda: error_generator()
-    relayer._websocket = mock_websocket
+    relayer._websocket = _make_mock_websocket(messages=['{"test": "message"}'])
     relayer._connected = True
     relayer._handle_message = AsyncMock(side_effect=Exception("Handle error"))
     
@@ -858,13 +880,15 @@ async def test_relayer_receive_messages_connection_closed_reconnect(relayer):
     relayer._should_reconnect = True
     relayer._start_reconnect = AsyncMock()
     
-    async def closed_generator():
-        raise ConnectionClosed(None, None)
-        yield
-    
-    mock_websocket = AsyncMock()
-    mock_websocket.__aiter__ = lambda: closed_generator()
-    relayer._websocket = mock_websocket
+    class _ClosedWS(_DummyWebSocket):
+        def __aiter__(self):
+            async def _gen():
+                raise ConnectionClosed(None, None)
+                yield  # pragma: no cover
+
+            return _gen()
+
+    relayer._websocket = _ClosedWS()
     relayer._connected = True
     
     await relayer._receive_messages()

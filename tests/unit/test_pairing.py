@@ -72,10 +72,10 @@ async def test_pairing_activate(pairing):
 @pytest.mark.asyncio
 async def test_calc_expiry():
     """Test expiry calculation."""
-    ttl = 5000  # 5 seconds
+    ttl = 5  # 5 seconds
     expiry = calc_expiry(ttl)
     assert expiry > 0
-    assert expiry > int(__import__("time").time() * 1000)
+    assert expiry > int(__import__("time").time())
 
 
 @pytest.mark.asyncio

@@ -1,4 +1,5 @@
 """Pairing controller implementation."""
+import asyncio
 from typing import Any, Dict, Optional
 
 from walletkit.constants.crypto import CRYPTO_CLIENT_SEED
@@ -206,7 +207,7 @@ class Pairing:
                     topic = parsed.get("value")
                     if topic and topic in self.pairings:
                         await self.delete(topic)
-                        self.events.emit("pairing_expire", {"topic": topic})
+                        asyncio.create_task(self.events.emit("pairing_expire", {"topic": topic}))
             except Exception as e:
                 self.logger.error(f"Error handling pairing expiry: {e}")
         

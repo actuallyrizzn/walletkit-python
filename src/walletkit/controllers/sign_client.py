@@ -120,7 +120,7 @@ class SignClient:
                         pass
                 # Decode message
                 payload = await self.core.crypto.decode(topic, message)
-
+                
                 if os.getenv("WALLETKIT_WC_DEBUG") == "1":
                     method = payload.get("method")
                     pid = payload.get("id")
@@ -537,7 +537,7 @@ class SignClient:
         await self.core.relayer.publish(pairing_topic, encoded, {"tag": 1101, "ttl": 300, "prompt": False})
 
         settle_params: Dict[str, Any] = {
-            "relay": {"protocol": "irn"},
+                "relay": {"protocol": "irn"},
             "namespaces": namespaces,
             "controller": {"publicKey": responder_public_key, "metadata": self.metadata},
             "expiry": expiry,
@@ -834,7 +834,7 @@ class SignClient:
             requester_metadata = requester.get("metadata")
         if not requester_public_key:
             raise ValueError("Auth requester publicKey not found")
-
+        
         # Official sign-client:
         # - response topic = hashKey(requesterPublicKey)
         # - response is JSON-RPC result (tag 1117) encrypted as TYPE_1 using requesterPublicKey

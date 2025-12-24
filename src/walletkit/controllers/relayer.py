@@ -260,6 +260,10 @@ class Relayer:
         self._check_initialized()
         if not self.connected:
             await self.connect()
+        # request() requires a live websocket because it waits for a response.
+        # If we don't have one, fail fast to avoid hanging until timeout.
+        if not self._websocket:
+            raise ConnectionError("WebSocket not available")
 
         req = format_jsonrpc_request(method=method, params=params)
         req_id = req.get("id")

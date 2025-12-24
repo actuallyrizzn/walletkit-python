@@ -85,7 +85,9 @@ async def test_crypto_get_client_id(crypto):
     """Test get_client_id method."""
     client_id = await crypto.get_client_id()
     assert client_id is not None
-    assert len(client_id) == 64  # Hash of seed
+    # WalletConnect relay-auth uses a did:key issuer
+    assert isinstance(client_id, str)
+    assert client_id.startswith("did:key:")
     
     # Should return same ID on subsequent calls
     client_id2 = await crypto.get_client_id()
@@ -97,7 +99,23 @@ async def test_crypto_sign_jwt(crypto):
     """Test sign_jwt method."""
     jwt = await crypto.sign_jwt("https://relay.walletconnect.com")
     assert jwt is not None
-    assert "placeholder_jwt" in jwt
+    assert isinstance(jwt, str)
+    parts = jwt.split(".")
+    assert len(parts) == 3
+
+    import base64
+
+    def b64url_decode(s: str) -> bytes:
+        pad = "=" * ((4 - (len(s) % 4)) % 4)
+        return base64.urlsafe_b64decode((s + pad).encode("utf-8"))
+
+    header = json.loads(b64url_decode(parts[0]).decode("utf-8"))
+    payload = json.loads(b64url_decode(parts[1]).decode("utf-8"))
+
+    assert header["alg"] == "EdDSA"
+    assert header["typ"] == "JWT"
+    assert payload["aud"] == "https://relay.walletconnect.com"
+    assert payload["iss"].startswith("did:key:")
 
 
 @pytest.mark.asyncio
