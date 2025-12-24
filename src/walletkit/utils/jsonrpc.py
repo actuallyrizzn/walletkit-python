@@ -1,8 +1,10 @@
 """JSON-RPC utilities."""
 from typing import Any, Dict, Optional, Union
 
+from walletkit.exceptions import ProtocolError
 
-class JsonRpcError(Exception):
+
+class JsonRpcError(ProtocolError):
     """JSON-RPC error."""
 
     def __init__(self, code: int, message: str, data: Optional[Any] = None) -> None:

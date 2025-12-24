@@ -4,6 +4,8 @@ from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import Any, Optional
 
+from walletkit.exceptions import StorageError
+
 
 class IKeyValueStorage(ABC):
     """Abstract storage interface."""
@@ -88,7 +90,12 @@ class FileStorage(IKeyValueStorage):
                 key = file_path.stem.replace("_", "/")
                 with open(file_path, "r") as f:
                     self._cache[key] = json.load(f)
-            except Exception:
+            except (FileNotFoundError, PermissionError, json.JSONDecodeError) as e:
+                # Log but don't fail initialization if individual files are corrupted
+                # This allows the cache to load other valid files
+                pass
+            except OSError as e:
+                # File system errors - log but continue
                 pass
 
     async def get_item(self, key: str) -> Optional[Any]:
@@ -105,8 +112,12 @@ class FileStorage(IKeyValueStorage):
                 value = json.load(f)
                 self._cache[key] = value
                 return value
-        except Exception:
+        except FileNotFoundError:
             return None
+        except (PermissionError, OSError) as e:
+            raise StorageError(f"Failed to read storage file for key '{key}': {e}") from e
+        except json.JSONDecodeError as e:
+            raise StorageError(f"Corrupted storage file for key '{key}': {e}") from e
 
     async def set_item(self, key: str, value: Any) -> None:
         """Set an item in storage."""
@@ -116,10 +127,10 @@ class FileStorage(IKeyValueStorage):
         try:
             with open(file_path, "w") as f:
                 json.dump(value, f)
-        except Exception as e:
+        except (PermissionError, OSError) as e:
             # Remove from cache if write failed
             self._cache.pop(key, None)
-            raise e
+            raise StorageError(f"Failed to write storage file for key '{key}': {e}") from e
 
     async def remove_item(self, key: str) -> None:
         """Remove an item from storage."""
@@ -129,7 +140,9 @@ class FileStorage(IKeyValueStorage):
         if file_path.exists():
             try:
                 file_path.unlink()
-            except Exception:
+            except (FileNotFoundError, PermissionError, OSError):
+                # File may have been deleted by another process, or permission denied
+                # Log but don't fail - the key is already removed from cache
                 pass
 
     async def get_keys(self) -> list[str]:

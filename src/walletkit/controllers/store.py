@@ -226,8 +226,10 @@ class Store(Generic[Key, Data]):
             # Re-raise restore override errors
             raise
         except Exception as e:
+            # Log restore errors but don't fail initialization
+            # Store will start with empty state if restore fails
             self.logger.debug(f"Failed to restore value for {self.name}")
-            self.logger.error(str(e))
+            self.logger.error(str(e), exc_info=True)
 
     def _get_data(self, key: Key) -> Data:
         """Get data for key, with error handling.

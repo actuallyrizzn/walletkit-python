@@ -54,7 +54,8 @@ def parse_uri(uri: str) -> Dict[str, Any]:
             decoded = base64.b64decode(uri).decode("utf-8")
             if "wc:" in decoded:
                 uri = decoded
-        except Exception:
+        except (ValueError, UnicodeDecodeError):
+            # Not base64 encoded or invalid encoding - continue with original URI
             pass
     
     # Extract protocol

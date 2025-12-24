@@ -148,7 +148,8 @@ def decode_type_byte(byte_data: bytes) -> int:
         s = byte_data.decode("utf-8")
         if s.isdigit():
             return int(s)
-    except Exception:
+    except (UnicodeDecodeError, ValueError):
+        # Invalid UTF-8 or not a digit - fall through to raise
         pass
     raise ValueError("Invalid type byte")
 
@@ -341,6 +342,8 @@ def decrypt_message(
         message_bytes = cipher.decrypt(iv, sealed, None)
         return message_bytes.decode("utf-8")
     except Exception as e:
+        # Re-raise as ValueError for backward compatibility
+        # Callers should catch and wrap in CryptoError if needed
         raise ValueError("Failed to decrypt") from e
 
 
