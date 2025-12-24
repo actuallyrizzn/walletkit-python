@@ -7,19 +7,23 @@ pytestmark = pytest.mark.integration
 
 
 def pytest_configure(config):
-    """Configure pytest for integration tests."""
-    # Check if PROJECT_ID is set
-    project_id = os.getenv("WALLETCONNECT_PROJECT_ID")
-    if not project_id or project_id == "test-project-id":
-        # Mark integration tests to skip if no real PROJECT_ID
-        config.option.markexpr = "not integration or integration_skip"
+    """Configure pytest for integration tests.
+
+    Note: We intentionally do NOT rewrite pytest's mark expression here.
+    Integration tests are skipped via the `project_id` fixture instead, so that
+    running a test explicitly yields a clear SKIPPED reason (not "deselected").
+    """
+    return
 
 
 @pytest.fixture(scope="session")
 def project_id():
     """Get WalletConnect Project ID from environment."""
     project_id = os.getenv("WALLETCONNECT_PROJECT_ID", "test-project-id")
-    if project_id == "test-project-id":
-        pytest.skip("WALLETCONNECT_PROJECT_ID not set - skipping integration tests")
+    if project_id in {"test-project-id", "a01e2f3b4c5d6e7f8a9b0c1d2e3f4a5b"}:
+        pytest.skip(
+            "WALLETCONNECT_PROJECT_ID not set (or still using the example placeholder) - "
+            "skipping integration tests"
+        )
     return project_id
 

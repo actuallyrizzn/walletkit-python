@@ -89,7 +89,7 @@ async def test_engine_init_with_event_client_error(mock_client):
     
     # Should raise InitializationError
     with pytest.raises(InitializationError):
-        await engine.init()
+    await engine.init()
 
 
 @pytest.mark.asyncio

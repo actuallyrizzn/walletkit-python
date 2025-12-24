@@ -18,6 +18,7 @@ import os
 import pytest
 import asyncio
 from typing import Optional
+from pathlib import Path
 
 try:
     from playwright.async_api import async_playwright, Page, Browser
@@ -35,9 +36,14 @@ from walletkit.utils.ethereum_signing import (
 
 
 # Test configuration
-# Using a test project ID - in production you'd get this from WalletConnect Cloud
-TEST_PROJECT_ID = os.getenv("WALLETCONNECT_PROJECT_ID", "a01e2f3b4c5d6e7f8a9b0c1d2e3f4a5b")
+# WalletConnect Cloud project id (must be set in env for live integration tests)
+TEST_PROJECT_ID = os.getenv("WALLETCONNECT_PROJECT_ID", "test-project-id")
 VENICE_URL = "https://venice.ai"
+
+# Hard time limit for the full browser flow so it can't hang in CI/dev runs.
+VENICE_TEST_TIMEOUT_S = float(os.getenv("VENICE_TEST_TIMEOUT_S", "120"))
+VENICE_ARTIFACTS_DIR = Path(os.getenv("VENICE_ARTIFACTS_DIR", "test-artifacts/venice"))
+VENICE_SIGN_IN_URL = os.getenv("VENICE_SIGN_IN_URL", f"{VENICE_URL}/sign-in")
 
 
 @pytest.fixture
@@ -51,7 +57,7 @@ def ethereum_account():
 
 
 @pytest.fixture
-async def wallet(ethereum_account):
+async def wallet(ethereum_account, project_id):
     """Create a WalletKit instance for wallet.
     
     This wallet can:
@@ -62,7 +68,7 @@ async def wallet(ethereum_account):
     
     storage = MemoryStorage()
     core = Core(
-        project_id=TEST_PROJECT_ID,
+        project_id=project_id,
         storage=storage,
     )
     await core.start()
@@ -88,6 +94,12 @@ async def wallet(ethereum_account):
     if hasattr(core, "relayer") and core.relayer:
         try:
             await core.relayer.disconnect()
+        except Exception:
+            pass
+    # Stop background tasks (prevents "Task was destroyed but it is pending!" warnings)
+    if hasattr(core, "expirer") and core.expirer:
+        try:
+            await core.expirer.cleanup()
         except Exception:
             pass
 
@@ -266,41 +278,37 @@ async def test_venice_ai_login_flow(wallet):
     6. Verifies connection
     """
     session_established = asyncio.Event()
-    session_topic = None
-    
+    session_topic: Optional[str] = None
+
     # Get the Ethereum account for this wallet
     ethereum_account = wallet._ethereum_account
     wallet_address = ethereum_account["address"]
-    
-    print(f"\n🔑 Wallet Address: {wallet_address}")
-    print(f"   (This is the address that will be used for signing)")
-    
-    # Set up wallet event handlers
-    @wallet.on("session_proposal")
+
+    # Windows consoles commonly default to cp1252, which can't print many emoji characters.
+    print(f"\n[WALLET] Wallet Address: {wallet_address}")
+    print("   (This is the address that will be used for signing)")
+
     async def on_session_proposal(event: dict) -> None:
         """Handle session proposal from venice.ai."""
         nonlocal session_topic
         proposal_id = event.get("id")
         params = event.get("params", {})
-        
-        print(f"\n📱 Session Proposal from Venice.ai:")
+
+        print("\n[PROPOSAL] Session Proposal from Venice.ai:")
         print(f"   Proposal ID: {proposal_id}")
-        
+
         proposer = params.get("proposer", {})
         proposer_metadata = proposer.get("metadata", {})
         print(f"   DApp: {proposer_metadata.get('name', 'Unknown')}")
-        
-        # Auto-approve for testing
-        # In a real scenario, you'd show this to the user
+
         try:
             required_namespaces = params.get("requiredNamespaces", {})
             namespaces = {}
-            
+
             if "eip155" in required_namespaces:
-                # Use the actual wallet address in the accounts
                 required_chains = required_namespaces["eip155"].get("chains", ["eip155:1"])
                 accounts = [f"{chain}:{wallet_address}" for chain in required_chains]
-                
+
                 namespaces["eip155"] = {
                     "accounts": accounts,
                     "chains": required_chains,
@@ -315,83 +323,74 @@ async def test_venice_ai_login_flow(wallet):
                     ]),
                 }
             else:
-                # Default namespace with wallet address
                 namespaces["eip155"] = {
                     "accounts": [f"eip155:1:{wallet_address}"],
                     "chains": ["eip155:1"],
                     "methods": ["eth_sendTransaction", "eth_sign", "personal_sign"],
                     "events": ["chainChanged", "accountsChanged"],
                 }
-            
+
             print(f"   Approving with address: {wallet_address}")
             result = await wallet.approve_session(
                 id=proposal_id,
                 namespaces=namespaces,
             )
             session_topic = result.get("topic")
-            print(f"   ✅ Session approved! Topic: {session_topic}")
+            print(f"   [OK] Session approved! Topic: {session_topic}")
             session_established.set()
         except Exception as e:
-            print(f"   ❌ Error approving session: {e}")
+            print(f"   [ERROR] Error approving session: {e}")
             import traceback
             traceback.print_exc()
             session_established.set()
-    
-    @wallet.on("session_request")
+
     async def on_session_request(event: dict) -> None:
         """Handle signing requests from venice.ai."""
-        print(f"\n📝 Signing Request from Venice.ai:")
+        print("\n[REQUEST] Signing Request from Venice.ai:")
         topic = event.get("topic")
         request_id = event.get("id")
         print(f"   Topic: {topic}")
         print(f"   Request ID: {request_id}")
-        
+
         params = event.get("params", {})
         request = params.get("request", {})
         method = request.get("method", "unknown")
         request_params = request.get("params", [])
         print(f"   Method: {method}")
-        
+
         # Get the Ethereum account from wallet instance
         ethereum_account = wallet._ethereum_account
         private_key = ethereum_account["private_key"]
         address = ethereum_account["address"]
-        
+
         try:
             if method == "personal_sign":
-                # personal_sign format: [message, address]
-                # Venice.ai will send the token to sign here
                 if len(request_params) < 2:
                     raise ValueError("personal_sign requires [message, address]")
-                
+
                 message_hex = request_params[0]
                 requested_address = request_params[1]
-                
-                # Convert hex message to string
+
                 if message_hex.startswith("0x"):
                     message_bytes = bytes.fromhex(message_hex[2:])
                 else:
                     message_bytes = bytes.fromhex(message_hex)
-                
-                # Try to decode as UTF-8, fallback to hex if not valid
+
                 try:
                     message = message_bytes.decode("utf-8")
                 except UnicodeDecodeError:
                     message = message_hex
-                
+
                 print(f"   Message to sign: {message[:50]}...")
                 print(f"   Requested address: {requested_address}")
                 print(f"   Our address: {address}")
-                
-                # Verify address matches (optional but recommended)
+
                 if requested_address.lower() != address.lower():
-                    print(f"   ⚠️  Address mismatch, but signing anyway for test")
-                
-                # Sign the message
+                    print("   [WARN] Address mismatch, but signing anyway for test")
+
                 signature = sign_personal_message(private_key, message)
-                print(f"   ✅ Signature created: {signature[:20]}...")
-                
-                # Respond with signature
+                print(f"   [OK] Signature created: {signature[:20]}...")
+
                 await wallet.respond_session_request(
                     topic=topic,
                     response={
@@ -400,11 +399,8 @@ async def test_venice_ai_login_flow(wallet):
                         "result": signature,
                     },
                 )
-                
             elif method == "eth_sign":
-                # eth_sign format: [address, message_hash]
-                # Less common, but some dApps use it
-                print("   ⚠️  eth_sign not fully implemented - use personal_sign instead")
+                print("   [WARN] eth_sign not fully implemented - use personal_sign instead")
                 await wallet.respond_session_request(
                     topic=topic,
                     response={
@@ -417,7 +413,7 @@ async def test_venice_ai_login_flow(wallet):
                     },
                 )
             else:
-                print(f"   ⚠️  Unknown method: {method}")
+                print(f"   [WARN] Unknown method: {method}")
                 await wallet.respond_session_request(
                     topic=topic,
                     response={
@@ -430,7 +426,7 @@ async def test_venice_ai_login_flow(wallet):
                     },
                 )
         except Exception as e:
-            print(f"   ❌ Error handling request: {e}")
+            print(f"   [ERROR] Error handling request: {e}")
             import traceback
             traceback.print_exc()
             await wallet.respond_session_request(
@@ -438,73 +434,88 @@ async def test_venice_ai_login_flow(wallet):
                 response={
                     "id": request_id,
                     "jsonrpc": "2.0",
-                    "error": {
-                        "code": -32000,
-                        "message": str(e),
-                    },
+                    "error": {"code": -32000, "message": str(e)},
                 },
             )
-    
-    # Launch browser and navigate to venice.ai
-    async with async_playwright() as p:
-        browser = await p.chromium.launch(
-            headless=False,  # Set to True for CI/automated runs
-            slow_mo=1000,  # Slow down for debugging (remove in production)
-        )
-        
-        try:
-            context = await browser.new_context()
-            page = await context.new_page()
-            
-            print(f"\n🌐 Navigating to {VENICE_URL}...")
-            await page.goto(VENICE_URL, wait_until="networkidle")
-            
-            print("🔍 Looking for login button...")
-            # Click login - adjust selector based on actual venice.ai page
-            # This is a placeholder - you'll need to inspect the actual page
-            try:
-                await page.click("text=Login / Sign Up", timeout=5000)
-            except Exception:
-                # Try alternative selectors
-                await page.click("a[href*='login'], button:has-text('Login')", timeout=5000)
-            
-            print("⏳ Waiting for WalletConnect modal/QR code...")
-            # Wait for WalletConnect UI to appear
-            # Adjust selector based on actual implementation
-            await page.wait_for_selector(
-                "canvas, img[alt*='QR'], [data-wc], .walletconnect-modal",
-                timeout=10000
+
+    # WalletKit `.on()` API expects (event, listener)
+    wallet.on("session_proposal", on_session_proposal)
+    wallet.on("session_request", on_session_request)
+
+    async def run_browser_flow() -> None:
+        async with async_playwright() as p:
+            browser = await p.chromium.launch(
+                headless=False,  # Set to True for CI/automated runs
+                slow_mo=1000,  # Slow down for debugging (remove in production)
             )
-            
-            # Extract WalletConnect URI
-            print("🔗 Extracting WalletConnect URI...")
-            uri = await extract_walletconnect_uri(page, timeout=30.0)
-            
-            if not uri:
-                pytest.fail("Could not extract WalletConnect URI from venice.ai page")
-            
-            print(f"✅ Found URI: {uri[:50]}...")
-            
-            # Pair wallet with URI
-            print("🔗 Pairing wallet with URI...")
-            await wallet.pair(uri)
-            
-            # Wait for session establishment
-            print("⏳ Waiting for session establishment...")
             try:
-                await asyncio.wait_for(session_established.wait(), timeout=30.0)
-            except asyncio.TimeoutError:
-                pytest.fail("Session establishment timeout")
-            
-            # Verify session was created
-            assert session_topic is not None, "Session topic should be set"
-            print(f"✅ Session established with topic: {session_topic}")
-            
-            # Give some time for any additional requests
-            await asyncio.sleep(2)
-            
-        finally:
-            await browser.close()
+                context = await browser.new_context()
+                # Required for reading the WalletConnect URI via "Copy link"
+                await context.grant_permissions(["clipboard-read", "clipboard-write"])
+                page = await context.new_page()
+
+                print(f"\n[NAV] Navigating to {VENICE_SIGN_IN_URL}...")
+                await page.goto(VENICE_SIGN_IN_URL, wait_until="domcontentloaded", timeout=90000)
+
+                # Venice shows Web3 login as an icon button with aria-label="Web3 Wallet"
+                print("[SEARCH] Clicking Web3 Wallet...")
+                await page.click("button[aria-label='Web3 Wallet']", timeout=15000)
+
+                print("[WAIT] Waiting for Connect Wallet modal...")
+                await page.wait_for_selector("text=Connect Wallet", timeout=15000)
+
+                print("[SEARCH] Selecting WalletConnect...")
+                await page.click("button:has-text('WalletConnect')", timeout=15000)
+
+                print("[WAIT] Waiting for WalletConnect QR view...")
+                try:
+                    # Copy link text varies slightly; use a case-insensitive text regex.
+                    await page.wait_for_selector("text=/copy link/i", timeout=60000)
+                except Exception:
+                    # Persist artifacts so we can tune selectors quickly.
+                    try:
+                        VENICE_ARTIFACTS_DIR.mkdir(parents=True, exist_ok=True)
+                        screenshot_path = VENICE_ARTIFACTS_DIR / "venice_wc_qr_view_missing.png"
+                        html_path = VENICE_ARTIFACTS_DIR / "venice_wc_qr_view_missing.html"
+                        await page.screenshot(path=str(screenshot_path), full_page=True)
+                        html_path.write_text(await page.content(), encoding="utf-8", errors="ignore")
+                        print(f"[DEBUG] Saved screenshot: {screenshot_path}")
+                        print(f"[DEBUG] Saved html: {html_path}")
+                        print(f"[DEBUG] URL: {page.url}")
+                        try:
+                            print(f"[DEBUG] Frames: {[f.url for f in page.frames]}")
+                        except Exception:
+                            pass
+                    except Exception as e:
+                        print(f"[DEBUG] Failed to save artifacts: {e}")
+                    raise
+
+                print("[EXTRACT] Copying WalletConnect link to clipboard...")
+                await page.click("text=/copy link/i", timeout=15000)
+                uri = await page.evaluate("() => navigator.clipboard.readText()")
+                if not uri:
+                    pytest.fail("Could not extract WalletConnect URI from venice.ai page")
+                if not isinstance(uri, str) or not uri.startswith("wc:"):
+                    pytest.fail(f"Clipboard did not contain a WalletConnect URI. Got: {uri!r}")
+                print(f"[OK] Found URI: {uri[:50]}...")
+
+                print("[PAIR] Pairing wallet with URI...")
+                await wallet.pair(uri)
+
+                print("[WAIT] Waiting for session establishment...")
+                try:
+                    await asyncio.wait_for(session_established.wait(), timeout=30.0)
+                except asyncio.TimeoutError:
+                    pytest.fail("Session establishment timeout")
+
+                assert session_topic is not None, "Session topic should be set"
+                print(f"[OK] Session established with topic: {session_topic}")
+                await asyncio.sleep(2)
+            finally:
+                await browser.close()
+
+    # Hard upper bound for the full test (prevents hangs).
+    await asyncio.wait_for(run_browser_flow(), timeout=VENICE_TEST_TIMEOUT_S)
 
 
 @pytest.mark.integration
@@ -519,7 +530,7 @@ async def test_venice_ai_api_key_generation():
     
     # Step 1: Get validation token
     async with aiohttp.ClientSession() as session:
-        print("\n📡 Requesting validation token from Venice.ai...")
+        print("\n[API] Requesting validation token from Venice.ai...")
         async with session.get(
             "https://api.venice.ai/api/v1/api_keys/generate_web3_key"
         ) as resp:
@@ -532,7 +543,7 @@ async def test_venice_ai_api_key_generation():
             if not token:
                 pytest.skip("No token returned from Venice.ai API")
             
-            print(f"✅ Received token: {token[:20]}...")
+            print(f"[OK] Received token: {token[:20]}...")
             
             # Step 2: Sign token with wallet
             # This requires your wallet implementation
@@ -554,7 +565,7 @@ async def test_venice_ai_api_key_generation():
             #     api_key_data = await resp.json()
             #     assert "apiKey" in api_key_data
             
-            print("⚠️  Token signing and API key generation not implemented in example")
+            print("[WARN] Token signing and API key generation not implemented in example")
 
 
 if __name__ == "__main__":
