@@ -2,6 +2,7 @@
 from typing import Any, Dict, List, Optional
 from uuid import uuid4
 
+from walletkit.types.logger import Logger
 from walletkit.utils.storage import IKeyValueStorage
 
 # Event client constants
@@ -73,7 +74,7 @@ class EventClient:
     def __init__(
         self,
         storage: IKeyValueStorage,
-        logger: Any,
+        logger: Logger,
         telemetry_enabled: bool = False,
         storage_prefix: str = "wc@2:core:",
         storage_version: str = EVENT_CLIENT_STORAGE_VERSION,

@@ -6,6 +6,7 @@ from walletkit.controllers.echo_client import EchoClient
 from walletkit.controllers.event_client import EventClient
 from walletkit.controllers.expirer import Expirer
 from walletkit.controllers.keychain import KeyChain
+from walletkit.types.logger import Logger
 from walletkit.utils.events import EventEmitter
 from walletkit.utils.storage import IKeyValueStorage, MemoryStorage
 
@@ -19,7 +20,7 @@ class Core:
         relay_url: Optional[str] = None,
         relay_origin: Optional[str] = None,
         storage: Optional[IKeyValueStorage] = None,
-        logger: Any = None,  # Logger
+        logger: Optional[Logger] = None,
         storage_prefix: str = "wc@2:core:",
     ) -> None:
         """Initialize Core.
@@ -77,7 +78,7 @@ class Core:
         self._initialized = True
         self.logger.info("Core Initialization Success")
 
-    def _create_default_logger(self) -> Any:
+    def _create_default_logger(self) -> Logger:
         """Create default logger.
         
         Returns:

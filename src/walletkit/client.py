@@ -1,5 +1,5 @@
 """WalletKit client implementation."""
-from typing import Any, Dict, Optional
+from typing import Any, Callable, Dict, Optional
 
 from walletkit.constants.client import CLIENT_CONTEXT
 from walletkit.controllers.engine import Engine
@@ -64,19 +64,19 @@ class WalletKit(IWalletKit):
 
     # ---------- Events ----------------------------------------------- #
 
-    def on(self, event: str, listener: Any) -> EventEmitter:
+    def on(self, event: str, listener: Callable[..., Any]) -> EventEmitter:
         """Register event listener."""
         return self.engine.on(event, listener)
 
-    def once(self, event: str, listener: Any) -> EventEmitter:
+    def once(self, event: str, listener: Callable[..., Any]) -> EventEmitter:
         """Register one-time event listener."""
         return self.engine.once(event, listener)
 
-    def off(self, event: str, listener: Any) -> EventEmitter:
+    def off(self, event: str, listener: Callable[..., Any]) -> EventEmitter:
         """Remove event listener."""
         return self.engine.off(event, listener)
 
-    def remove_listener(self, event: str, listener: Any) -> EventEmitter:
+    def remove_listener(self, event: str, listener: Callable[..., Any]) -> EventEmitter:
         """Remove event listener."""
         return self.engine.remove_listener(event, listener)
 

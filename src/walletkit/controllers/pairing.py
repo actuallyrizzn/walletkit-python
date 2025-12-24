@@ -4,6 +4,8 @@ from typing import Any, Dict, Optional
 
 from walletkit.constants.crypto import CRYPTO_CLIENT_SEED
 from walletkit.controllers.expirer import EXPIRER_EVENTS, parse_expirer_target
+from walletkit.types.core import ICore
+from walletkit.types.logger import Logger
 from walletkit.utils.crypto_utils import generate_random_bytes32
 from walletkit.utils.uri import format_uri, parse_uri
 
@@ -26,8 +28,8 @@ class Pairing:
 
     def __init__(
         self,
-        core: Any,  # ICore
-        logger: Any,  # Logger
+        core: ICore,
+        logger: Logger,
     ) -> None:
         """Initialize Pairing controller.
         

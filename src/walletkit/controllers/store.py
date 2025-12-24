@@ -1,6 +1,7 @@
 """Store implementation for managing key-value data with persistence."""
 from typing import Any, Callable, Dict, Generic, List, Optional, TypeVar
 
+from walletkit.types.logger import Logger
 from walletkit.utils.storage import IKeyValueStorage
 
 Key = TypeVar("Key")
@@ -13,7 +14,7 @@ class Store(Generic[Key, Data]):
     def __init__(
         self,
         storage: IKeyValueStorage,
-        logger: Any,  # Logger
+        logger: Logger,
         name: str,
         storage_prefix: str = "wc@2:core:",
         storage_version: str = "1.0",

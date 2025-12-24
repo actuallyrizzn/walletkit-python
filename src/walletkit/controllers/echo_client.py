@@ -1,6 +1,7 @@
 """EchoClient for push notification token registration."""
 from typing import Any, Dict, Optional
 
+from walletkit.types.logger import Logger
 from walletkit.utils.storage import IKeyValueStorage
 
 
@@ -10,7 +11,7 @@ class EchoClient:
     def __init__(
         self,
         storage: IKeyValueStorage,
-        logger: Any,
+        logger: Logger,
         storage_prefix: str = "wc@2:core:",
     ) -> None:
         """Initialize EchoClient.

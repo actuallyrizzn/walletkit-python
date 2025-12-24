@@ -9,6 +9,8 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from walletkit.constants.crypto import CRYPTO_CLIENT_SEED, CRYPTO_CONTEXT, CRYPTO_JWT_TTL
 from walletkit.controllers.keychain import KeyChain
+from walletkit.types.logger import Logger
+from walletkit.utils.storage import IKeyValueStorage
 from walletkit.utils.crypto_utils import (
     BASE64,
     BASE64URL,
@@ -33,8 +35,8 @@ class Crypto:
 
     def __init__(
         self,
-        storage: Any,  # IKeyValueStorage
-        logger: Any,  # Logger
+        storage: IKeyValueStorage,
+        logger: Logger,
         keychain: Optional[KeyChain] = None,
         storage_prefix: str = "wc@2:core:",
     ) -> None:

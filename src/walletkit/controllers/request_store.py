@@ -1,6 +1,7 @@
 """RequestStore for managing pending session requests."""
 from typing import Any, Dict, List
 
+from walletkit.types.logger import Logger
 from walletkit.utils.storage import IKeyValueStorage
 
 
@@ -14,7 +15,7 @@ class RequestStore:
     def __init__(
         self,
         storage: IKeyValueStorage,
-        logger: Any,
+        logger: Logger,
         storage_prefix: str = "wc@2:core:",
         storage_version: str = "1.0",
     ) -> None:
