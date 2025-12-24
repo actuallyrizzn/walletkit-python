@@ -992,26 +992,30 @@ async def test_sign_client_expirer_handles_proposal_expiry(sign_client):
 @pytest.mark.asyncio
 async def test_sign_client_init_event_client_error(core):
     """Test init with event_client error."""
+    from walletkit.exceptions import InitializationError
+    
     # Make event_client.init raise an exception
     core.event_client.init = AsyncMock(side_effect=Exception("Event client error"))
     
-    sign_client = await SignClient.init(
-        core=core,
-        metadata={"name": "Test", "description": "Test"},
-    )
-    
-    # Should still initialize successfully
-    assert sign_client._initialized is True
+    # Should raise InitializationError
+    with pytest.raises(InitializationError):
+        sign_client = await SignClient.init(
+            core=core,
+            metadata={"name": "Test", "description": "Test"},
+        )
 
 
 @pytest.mark.asyncio
 async def test_sign_client_relayer_message_handler_error(sign_client):
     """Test relayer message handler error handling."""
-    # Emit message with invalid data
-    await sign_client.core.relayer.events.emit("message", {
-        "topic": "test_topic",
-        "message": "invalid_message",
-    })
+    from walletkit.exceptions import ProtocolError
+    
+    # Emit message with invalid data - should raise ProtocolError
+    with pytest.raises(ProtocolError):
+        await sign_client.core.relayer.events.emit("message", {
+            "topic": "test_topic",
+            "message": "invalid_message",
+        })
     
     # Should handle error gracefully
     await asyncio.sleep(0.1)

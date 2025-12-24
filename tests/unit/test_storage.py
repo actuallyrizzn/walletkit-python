@@ -95,11 +95,13 @@ async def test_file_storage_get_item_file_error():
         # Clear cache to force file read
         storage._cache.clear()
         
-        # Mock file read to raise exception
-        with patch("builtins.open", side_effect=Exception("Read error")):
-            result = await storage.get_item("test_key")
-            # Should return None on error
-            assert result is None
+        from walletkit.exceptions import StorageError
+        
+        # Mock file read to raise exception that gets caught
+        with patch("builtins.open", side_effect=OSError("Read error")):
+            # Should raise StorageError
+            with pytest.raises(StorageError, match="Failed to read storage file"):
+                await storage.get_item("test_key")
 
 
 @pytest.mark.asyncio
@@ -111,9 +113,11 @@ async def test_file_storage_set_item_write_error():
     with tempfile.TemporaryDirectory() as tmpdir:
         storage = FileStorage(Path(tmpdir))
         
-        # Mock file write to raise exception
-        with patch("builtins.open", side_effect=Exception("Write error")):
-            with pytest.raises(Exception, match="Write error"):
+        from walletkit.exceptions import StorageError
+        
+        # Mock file write to raise exception that gets caught
+        with patch("builtins.open", side_effect=OSError("Write error")):
+            with pytest.raises(StorageError, match="Failed to write storage file"):
                 await storage.set_item("test_key", "test_value")
             
             # Should be removed from cache on error
@@ -132,9 +136,9 @@ async def test_file_storage_remove_item_error():
         # Create a file
         await storage.set_item("test_key", "test_value")
         
-        # Mock unlink to raise exception
-        with patch("pathlib.Path.unlink", side_effect=Exception("Unlink error")):
-            # Should handle error gracefully
+        # Mock unlink to raise exception that gets caught
+        with patch("pathlib.Path.unlink", side_effect=OSError("Unlink error")):
+            # Should handle error gracefully (OSError is caught)
             await storage.remove_item("test_key")
             
             # Should still be removed from cache

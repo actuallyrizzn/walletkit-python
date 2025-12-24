@@ -1,4 +1,6 @@
 """Shared pytest fixtures for walletkit tests."""
+from typing import Any
+
 import pytest
 
 from walletkit.core import Core
@@ -16,7 +18,7 @@ class SimpleLogger:
         """Log debug message."""
         pass
 
-    def error(self, msg: str) -> None:
+    def error(self, msg: str, *args: Any, exc_info: Any = None, **kwargs: Any) -> None:
         """Log error message."""
         pass
 

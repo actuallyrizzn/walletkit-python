@@ -37,10 +37,12 @@ async def test_relayer_publish_max_retries_exceeded(relayer):
     relayer._connected = True
     relayer._websocket = AsyncMock()
     
-    # Mock request to always fail
-    relayer.request = AsyncMock(side_effect=Exception("Always fails"))
+    from walletkit.exceptions import ProtocolError
     
-    with pytest.raises(Exception, match="Always fails"):
+    # Mock request to always fail with a retryable exception
+    relayer.request = AsyncMock(side_effect=ProtocolError("Always fails"))
+    
+    with pytest.raises(ProtocolError, match="Always fails"):
         await relayer.publish("topic1", "test_message", opts={"tag": 1, "ttl": 100, "max_retries": 2})
     
     # Should have attempted max_retries
@@ -54,12 +56,14 @@ async def test_relayer_publish_reconnect_on_failure(relayer):
     
     call_count = 0
     
+    from walletkit.exceptions import RelayConnectionError
+    
     async def mock_request(*args, **kwargs):
         nonlocal call_count
         call_count += 1
         if call_count == 1:
             relayer._connected = False
-            raise Exception("Connection lost")
+            raise RelayConnectionError("Connection lost")
         return None
     
     relayer.request = mock_request
@@ -82,7 +86,9 @@ async def test_relayer_request_websocket_not_available(relayer):
     relayer._connected = True
     relayer._websocket = None
     
-    with pytest.raises(ConnectionError, match="WebSocket not available"):
+    from walletkit.exceptions import RelayConnectionError
+    
+    with pytest.raises(RelayConnectionError, match="WebSocket not available"):
         await relayer.request("test_method", {})
 
 
@@ -171,26 +177,31 @@ async def test_relayer_request_error_response(relayer):
 
 @pytest.mark.asyncio
 async def test_relayer_handle_message_debug_exception(relayer):
-    """Test _handle_message with exception in debug logging."""
+    """Test _handle_message with exception in debug data processing."""
     await relayer.init()
     
     # Set debug env var
     with patch.dict("os.environ", {"WALLETKIT_WC_DEBUG": "1"}):
-        # Mock logger.debug to raise exception
-        relayer.logger.debug = MagicMock(side_effect=Exception("Debug error"))
+        # Create payload with data that will cause exception in debug block
+        # Use a dict with a key that causes exception when accessed
+        class BadDict(dict):
+            def get(self, key, default=None):
+                if key == "publishedAt":
+                    raise Exception("Debug error")
+                return super().get(key, default)
         
-        # Should handle exception gracefully
         payload = {
             "method": "irn_subscription",
             "params": {
-                "data": {
+                "data": BadDict({
                     "topic": "test_topic",
-                    "message": "test_message"
-                }
+                    "message": "test_message",
+                    "tag": 1
+                })
             }
         }
         
-        # Should not raise
+        # Should handle exception gracefully and not break protocol flow
         await relayer._handle_message(payload)
 
 

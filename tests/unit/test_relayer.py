@@ -151,9 +151,11 @@ async def test_relayer_connect_timeout(relayer):
         patch("walletkit.controllers.relayer.websockets.connect", new_callable=AsyncMock) as mock_connect,
         patch.object(relayer, "_start_reconnect", new_callable=AsyncMock) as mock_start_reconnect,
     ):
+        from walletkit.exceptions import OperationTimeoutError
+        
         mock_connect.side_effect = asyncio.TimeoutError()
         
-        with pytest.raises(TimeoutError):
+        with pytest.raises(OperationTimeoutError):
             await relayer.connect()
         
         assert not relayer.connected
@@ -308,7 +310,9 @@ async def test_relayer_publish_with_retry(relayer):
     relayer._websocket = AsyncMock()
     relayer._connected = True
     relayer._initialized = True
-    relayer.request = AsyncMock(side_effect=[Exception("Fail"), Exception("Fail"), {"id": 1, "result": True}])
+    from walletkit.exceptions import ProtocolError
+    
+    relayer.request = AsyncMock(side_effect=[ProtocolError("Fail"), ProtocolError("Fail"), {"id": 1, "result": True}])
     
     topic = "test_topic"
     message = '{"test": "message"}'
@@ -737,13 +741,15 @@ async def test_relayer_send_timeout(relayer):
     await relayer.init()
     
     mock_websocket = AsyncMock()
+    from walletkit.exceptions import OperationTimeoutError
+    
     mock_websocket.send = AsyncMock(side_effect=asyncio.TimeoutError())
     relayer._websocket = mock_websocket
     relayer._connected = True
     
     payload = {"id": 1, "method": "test"}
     
-    with pytest.raises(TimeoutError):
+    with pytest.raises(OperationTimeoutError):
         await relayer._send(payload)
     
     # Message should be queued

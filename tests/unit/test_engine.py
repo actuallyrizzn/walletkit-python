@@ -80,14 +80,16 @@ async def test_engine_get_pending_requests(engine):
 @pytest.mark.asyncio
 async def test_engine_init_with_event_client_error(mock_client):
     """Test engine init with event_client error."""
+    from walletkit.exceptions import InitializationError
+    
     # Make event_client.init raise an exception
     mock_client.core.event_client.init = AsyncMock(side_effect=Exception("Event client error"))
     
     engine = Engine(mock_client)
-    await engine.init()
     
-    # Should still initialize successfully
-    assert engine.sign_client is not None
+    # Should raise InitializationError
+    with pytest.raises(InitializationError):
+        await engine.init()
 
 
 @pytest.mark.asyncio

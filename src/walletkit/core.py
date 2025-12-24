@@ -102,8 +102,13 @@ class Core:
                 """Alias for warn for compatibility."""
                 self.warn(msg, *args)
 
-            def error(self, msg: str, *args: Any) -> None:
+            def error(self, msg: str, *args: Any, **kwargs: Any) -> None:
+                exc_info = kwargs.pop('exc_info', None)
                 print(f"[ERROR] {msg}")
+                if exc_info:
+                    # If exc_info is True, print traceback
+                    import traceback
+                    traceback.print_exc()
 
         return SimpleLogger()
 
