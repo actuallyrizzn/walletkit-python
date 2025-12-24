@@ -1,4 +1,5 @@
 """Tests for Store implementations."""
+import asyncio
 from typing import Any, Dict
 
 import pytest
@@ -13,24 +14,54 @@ pytest_plugins = ["tests.shared.fixtures"]
 
 
 @pytest.mark.asyncio
-async def test_store_basic_operations(storage, logger):
-    """Test basic store operations."""
+async def test_store_set_and_get(storage, logger):
+    """Test store set and get operations."""
     store = Store(storage, logger, "test_store")
     await store.init()
 
-    # Set and get
+    # Set a value
     await store.set("key1", {"value": "test1"})
-    assert store.get("key1") == {"value": "test1"}
+    
+    # Verify it can be retrieved
+    result = store.get("key1")
+    assert result == {"value": "test1"}
     assert store.length == 1
 
-    # Update
-    await store.update("key1", {"value": "updated"})
-    assert store.get("key1") == {"value": "updated"}
 
-    # Delete
+@pytest.mark.asyncio
+async def test_store_update_existing_key(storage, logger):
+    """Test store update operation on existing key."""
+    store = Store(storage, logger, "test_store")
+    await store.init()
+
+    # Set initial value
+    await store.set("key1", {"value": "test1"})
+    assert store.get("key1") == {"value": "test1"}
+    
+    # Update the value
+    await store.update("key1", {"value": "updated"})
+    
+    # Verify update
+    assert store.get("key1") == {"value": "updated"}
+    assert store.length == 1  # Length should not change
+
+
+@pytest.mark.asyncio
+async def test_store_delete_existing_key(storage, logger):
+    """Test store delete operation."""
+    store = Store(storage, logger, "test_store")
+    await store.init()
+
+    # Set a value
+    await store.set("key1", {"value": "test1"})
+    assert store.length == 1
+    
+    # Delete the value
     await store.delete("key1")
+    
+    # Verify deletion
     assert store.length == 0
-    with pytest.raises(KeyError):
+    with pytest.raises(KeyError, match="key1"):
         store.get("key1")
 
 
@@ -57,8 +88,8 @@ async def test_store_persistence(storage, logger):
 
 
 @pytest.mark.asyncio
-async def test_store_get_all(storage, logger):
-    """Test get_all with filtering."""
+async def test_store_get_all_returns_all_items(storage, logger):
+    """Test get_all returns all items when no filter is provided."""
     store = Store(storage, logger, "test_store")
     await store.init()
 
@@ -67,10 +98,30 @@ async def test_store_get_all(storage, logger):
     await store.set("key3", {"type": "b", "value": 3})
 
     all_items = store.get_all()
+    
     assert len(all_items) == 3
+    assert all(isinstance(item, dict) for item in all_items)
+    # Verify we can retrieve items by their keys
+    assert store.get("key1") in all_items
+    assert store.get("key2") in all_items
+    assert store.get("key3") in all_items
+
+
+@pytest.mark.asyncio
+async def test_store_get_all_with_filter(storage, logger):
+    """Test get_all with filter returns only matching items."""
+    store = Store(storage, logger, "test_store")
+    await store.init()
+
+    await store.set("key1", {"type": "a", "value": 1})
+    await store.set("key2", {"type": "a", "value": 2})
+    await store.set("key3", {"type": "b", "value": 3})
 
     filtered = store.get_all({"type": "a"})
+    
     assert len(filtered) == 2
+    assert all(item.get("type") == "a" for item in filtered)
+    assert all(item.get("value") in [1, 2] for item in filtered)
 
 
 @pytest.mark.asyncio
@@ -160,16 +211,26 @@ async def test_store_restore_exception_handling(storage, logger):
         assert store.length == 0
 
 
+@pytest.mark.parametrize("method,args,kwargs", [
+    ("get", ("key1",), {}),
+    ("set", ("key1", {"value": "test"}), {}),
+    ("update", ("key1", {"value": "updated"}), {}),
+    ("delete", ("key1",), {}),
+    ("get_all", (), {}),
+])
 @pytest.mark.asyncio
-async def test_store_check_initialized(storage, logger):
-    """Test _check_initialized raises error when not initialized."""
+async def test_store_raises_error_when_not_initialized(storage, logger, method, args, kwargs):
+    """Test that store methods raise RuntimeError when not initialized."""
     store = Store(storage, logger, "test_store")
     
-    with pytest.raises(RuntimeError, match="not initialized"):
-        store.get("key1")
+    # Store should not be initialized
+    assert not store._initialized
     
-    with pytest.raises(RuntimeError, match="not initialized"):
-        await store.set("key1", {"value": "test"})
-    
-    with pytest.raises(RuntimeError, match="not initialized"):
-        store.get_all()
+    # All methods should raise RuntimeError
+    method_obj = getattr(store, method)
+    if asyncio.iscoroutinefunction(method_obj):
+        with pytest.raises(RuntimeError, match="not initialized"):
+            await method_obj(*args, **kwargs)
+    else:
+        with pytest.raises(RuntimeError, match="not initialized"):
+            method_obj(*args, **kwargs)
