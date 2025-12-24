@@ -3,11 +3,18 @@ import asyncio
 import json
 import os
 from typing import Any, Dict, Optional
-from urllib.parse import urlparse, parse_qs, urlencode, urlunparse
+from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
 
 import websockets
 from websockets.client import WebSocketClientProtocol
 
+from walletkit.constants.timing import (
+    DEFAULT_HEARTBEAT_INTERVAL,
+    DEFAULT_TTL,
+    HEARTBEAT_TIMEOUT,
+    INITIAL_RECONNECT_DELAY,
+    MAX_RECONNECT_DELAY,
+)
 from walletkit.utils.events import EventEmitter
 from walletkit.utils.jsonrpc import format_jsonrpc_request, get_big_int_rpc_id
 
@@ -54,10 +61,10 @@ class Relayer:
         self._reconnect_task: Optional[asyncio.Task] = None
         self._reconnect_attempts = 0
         self._max_reconnect_attempts = 6
-        self._reconnect_delay = 1.0  # Initial delay in seconds
-        self._max_reconnect_delay = 30.0  # Max delay in seconds
-        self._heartbeat_interval = 30.0  # Heartbeat interval in seconds
-        self._heartbeat_timeout = 35.0  # Heartbeat timeout (30s + 5s buffer)
+        self._reconnect_delay = INITIAL_RECONNECT_DELAY
+        self._max_reconnect_delay = MAX_RECONNECT_DELAY
+        self._heartbeat_interval = DEFAULT_HEARTBEAT_INTERVAL
+        self._heartbeat_timeout = HEARTBEAT_TIMEOUT
         self._last_heartbeat: Optional[float] = None
         self._heartbeat_task: Optional[asyncio.Task] = None
         self._should_reconnect = True
@@ -220,7 +227,7 @@ class Relayer:
         
         # WalletConnect relay API expects ttl/prompt/tag for publishes.
         # Defaults align with reference implementation (6 hours, prompt=false, tag=0).
-        ttl = (opts or {}).get("ttl", 6 * 60 * 60)  # seconds
+        ttl = (opts or {}).get("ttl", DEFAULT_TTL)
         prompt = (opts or {}).get("prompt", False)
         tag = (opts or {}).get("tag", 0)
 

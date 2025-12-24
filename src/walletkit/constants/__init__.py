@@ -6,6 +6,14 @@ from walletkit.constants.client import (
     PROTOCOL,
     PROTOCOL_VERSION,
 )
+from walletkit.constants.timing import (
+    DEFAULT_HEARTBEAT_INTERVAL,
+    DEFAULT_TTL,
+    HEARTBEAT_TIMEOUT,
+    INITIAL_RECONNECT_DELAY,
+    MAX_RECONNECT_DELAY,
+    RECENTLY_DELETED_LIMIT,
+)
 
 __all__ = [
     "PROTOCOL",
@@ -13,4 +21,10 @@ __all__ = [
     "CLIENT_CONTEXT",
     "CLIENT_STORAGE_PREFIX",
     "CLIENT_STORAGE_OPTIONS",
+    "DEFAULT_TTL",
+    "DEFAULT_HEARTBEAT_INTERVAL",
+    "HEARTBEAT_TIMEOUT",
+    "MAX_RECONNECT_DELAY",
+    "INITIAL_RECONNECT_DELAY",
+    "RECENTLY_DELETED_LIMIT",
 ]

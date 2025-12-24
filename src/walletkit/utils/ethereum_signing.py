@@ -4,6 +4,7 @@ This module provides functions to sign Ethereum messages (personal_sign, eth_sig
 using private keys. This is separate from WalletConnect's protocol encryption.
 """
 from typing import Optional
+
 from eth_account import Account
 from eth_account.messages import encode_defunct
 

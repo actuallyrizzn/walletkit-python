@@ -146,6 +146,7 @@ def get_big_int_rpc_id() -> int:
     """
     import random
     import time
+
     # Generate a large random ID (similar to JS implementation)
     return int(time.time() * 1000000) + random.randint(0, 999999)
 

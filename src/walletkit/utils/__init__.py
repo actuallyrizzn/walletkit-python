@@ -1,4 +1,5 @@
 """Utilities package."""
+from walletkit.utils.decorators import handle_errors, require_initialized
 from walletkit.utils.events import EventEmitter
 from walletkit.utils.jsonrpc import (
     JsonRpcError,
@@ -30,4 +31,6 @@ __all__ = [
     "is_jsonrpc_error",
     "parse_uri",
     "format_uri",
+    "handle_errors",
+    "require_initialized",
 ]

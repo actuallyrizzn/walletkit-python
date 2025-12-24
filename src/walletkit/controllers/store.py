@@ -1,6 +1,7 @@
 """Store implementation for managing key-value data with persistence."""
 from typing import Any, Callable, Dict, Generic, List, Optional, TypeVar
 
+from walletkit.constants.timing import RECENTLY_DELETED_LIMIT
 from walletkit.utils.storage import IKeyValueStorage
 
 Key = TypeVar("Key")
@@ -41,7 +42,7 @@ class Store(Generic[Key, Data]):
         self._initialized = False
         self._cached: List[Data] = []
         self._recently_deleted: List[Key] = []
-        self._recently_deleted_limit = 200
+        self._recently_deleted_limit = RECENTLY_DELETED_LIMIT
 
     @property
     def storage_key(self) -> str:

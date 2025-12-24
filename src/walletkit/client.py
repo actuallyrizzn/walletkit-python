@@ -5,6 +5,7 @@ from walletkit.constants.client import CLIENT_CONTEXT
 from walletkit.controllers.engine import Engine
 from walletkit.core import Core
 from walletkit.types.client import IWalletKit, Metadata, Options, SignConfig
+from walletkit.utils.decorators import handle_errors
 from walletkit.utils.events import EventEmitter
 from walletkit.utils.notifications import Notifications
 
@@ -78,6 +79,7 @@ class WalletKit(IWalletKit):
 
     # ---------- Engine Methods ----------------------------------------------- #
 
+    @handle_errors
     async def pair(self, uri: str, activate_pairing: Optional[bool] = None) -> None:
         """Pair with URI.
         
@@ -85,12 +87,9 @@ class WalletKit(IWalletKit):
             uri: WalletConnect URI
             activate_pairing: Optional flag to activate pairing
         """
-        try:
-            await self.engine.pair(uri, activate_pairing)
-        except Exception as error:
-            self.logger.error(str(error))
-            raise
+        await self.engine.pair(uri, activate_pairing)
 
+    @handle_errors
     async def approve_session(
         self,
         id: int,
@@ -115,20 +114,17 @@ class WalletKit(IWalletKit):
         Returns:
             Session struct
         """
-        try:
-            return await self.engine.approve_session(
-                id=id,
-                namespaces=namespaces,
-                session_properties=session_properties,
-                scoped_properties=scoped_properties,
-                session_config=session_config,
-                relay_protocol=relay_protocol,
-                proposal_requests_responses=proposal_requests_responses,
-            )
-        except Exception as error:
-            self.logger.error(str(error))
-            raise
+        return await self.engine.approve_session(
+            id=id,
+            namespaces=namespaces,
+            session_properties=session_properties,
+            scoped_properties=scoped_properties,
+            session_config=session_config,
+            relay_protocol=relay_protocol,
+            proposal_requests_responses=proposal_requests_responses,
+        )
 
+    @handle_errors
     async def reject_session(self, id: int, reason: Dict[str, Any]) -> None:
         """Reject session proposal.
         
@@ -136,12 +132,9 @@ class WalletKit(IWalletKit):
             id: Proposal ID
             reason: Rejection reason
         """
-        try:
-            await self.engine.reject_session(id, reason)
-        except Exception as error:
-            self.logger.error(str(error))
-            raise
+        await self.engine.reject_session(id, reason)
 
+    @handle_errors
     async def update_session(
         self, topic: str, namespaces: Dict[str, Any]
     ) -> Dict[str, Any]:
@@ -154,12 +147,9 @@ class WalletKit(IWalletKit):
         Returns:
             Dict with 'acknowledged' callback
         """
-        try:
-            return await self.engine.update_session(topic, namespaces)
-        except Exception as error:
-            self.logger.error(str(error))
-            raise
+        return await self.engine.update_session(topic, namespaces)
 
+    @handle_errors
     async def extend_session(self, topic: str) -> Dict[str, Any]:
         """Extend session.
         
@@ -169,12 +159,9 @@ class WalletKit(IWalletKit):
         Returns:
             Dict with 'acknowledged' callback
         """
-        try:
-            return await self.engine.extend_session(topic)
-        except Exception as error:
-            self.logger.error(str(error))
-            raise
+        return await self.engine.extend_session(topic)
 
+    @handle_errors
     async def respond_session_request(
         self, topic: str, response: Dict[str, Any]
     ) -> None:
@@ -184,12 +171,9 @@ class WalletKit(IWalletKit):
             topic: Session topic
             response: JSON-RPC response
         """
-        try:
-            await self.engine.respond_session_request(topic, response)
-        except Exception as error:
-            self.logger.error(str(error))
-            raise
+        await self.engine.respond_session_request(topic, response)
 
+    @handle_errors
     async def disconnect_session(self, topic: str, reason: Dict[str, Any]) -> None:
         """Disconnect session.
         
@@ -197,12 +181,9 @@ class WalletKit(IWalletKit):
             topic: Session topic
             reason: Disconnect reason
         """
-        try:
-            await self.engine.disconnect_session(topic, reason)
-        except Exception as error:
-            self.logger.error(str(error))
-            raise
+        await self.engine.disconnect_session(topic, reason)
 
+    @handle_errors
     async def emit_session_event(
         self, topic: str, event: Dict[str, Any], chain_id: str
     ) -> None:
@@ -213,60 +194,45 @@ class WalletKit(IWalletKit):
             event: Event data
             chain_id: Chain ID
         """
-        try:
-            await self.engine.emit_session_event(topic, event, chain_id)
-        except Exception as error:
-            self.logger.error(str(error))
-            raise
+        await self.engine.emit_session_event(topic, event, chain_id)
 
+    @handle_errors
     def get_active_sessions(self) -> Dict[str, Any]:
         """Get active sessions.
         
         Returns:
             Dict of active sessions keyed by topic
         """
-        try:
-            return self.engine.get_active_sessions()
-        except Exception as error:
-            self.logger.error(str(error))
-            raise
+        return self.engine.get_active_sessions()
 
+    @handle_errors
     def get_pending_session_proposals(self) -> Dict[int, Any]:
         """Get pending session proposals.
         
         Returns:
             Dict of pending proposals keyed by ID
         """
-        try:
-            return self.engine.get_pending_session_proposals()
-        except Exception as error:
-            self.logger.error(str(error))
-            raise
+        return self.engine.get_pending_session_proposals()
 
+    @handle_errors
     def get_pending_session_requests(self) -> list[Dict[str, Any]]:
         """Get pending session requests.
         
         Returns:
             List of pending requests
         """
-        try:
-            return self.engine.get_pending_session_requests()
-        except Exception as error:
-            self.logger.error(str(error))
-            raise
+        return self.engine.get_pending_session_requests()
 
+    @handle_errors
     async def register_device_token(self, params: Dict[str, Any]) -> None:
         """Register device token.
         
         Args:
             params: Device token parameters
         """
-        try:
-            await self.engine.register_device_token(params)
-        except Exception as error:
-            self.logger.error(str(error))
-            raise
+        await self.engine.register_device_token(params)
 
+    @handle_errors
     async def approve_session_authenticate(
         self, params: Dict[str, Any]
     ) -> Dict[str, Any]:
@@ -278,12 +244,9 @@ class WalletKit(IWalletKit):
         Returns:
             Dict with session
         """
-        try:
-            return await self.engine.approve_session_authenticate(params)
-        except Exception as error:
-            self.logger.error(str(error))
-            raise
+        return await self.engine.approve_session_authenticate(params)
 
+    @handle_errors
     def format_auth_message(self, request: Dict[str, Any], iss: str) -> str:
         """Format auth message.
         
@@ -294,12 +257,9 @@ class WalletKit(IWalletKit):
         Returns:
             Formatted message
         """
-        try:
-            return self.engine.format_auth_message(request, iss)
-        except Exception as error:
-            self.logger.error(str(error))
-            raise
+        return self.engine.format_auth_message(request, iss)
 
+    @handle_errors
     async def reject_session_authenticate(
         self, id: int, reason: Dict[str, Any]
     ) -> None:
@@ -309,9 +269,5 @@ class WalletKit(IWalletKit):
             id: Request ID
             reason: Rejection reason
         """
-        try:
-            await self.engine.reject_session_authenticate(id, reason)
-        except Exception as error:
-            self.logger.error(str(error))
-            raise
+        await self.engine.reject_session_authenticate(id, reason)
 

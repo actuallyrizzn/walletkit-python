@@ -45,8 +45,8 @@ class Core:
         self.crypto = Crypto(self.storage, self.logger, storage_prefix=storage_prefix)
         
         # Initialize controllers
-        from walletkit.controllers.relayer import Relayer
         from walletkit.controllers.pairing import Pairing
+        from walletkit.controllers.relayer import Relayer
         
         self.relayer = Relayer(
             self,
