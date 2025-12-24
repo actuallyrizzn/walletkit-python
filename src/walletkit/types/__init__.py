@@ -1,4 +1,7 @@
 """Types package."""
+from walletkit.types.session import ProposalId, SessionTopic
+
+__all__ = ["ProposalId", "SessionTopic"]
 from walletkit.types.client import (
     Event,
     EventArguments,
