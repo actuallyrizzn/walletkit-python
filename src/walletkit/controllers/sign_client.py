@@ -9,6 +9,7 @@ from walletkit.controllers.expirer import EXPIRER_EVENTS, parse_expirer_target
 from walletkit.controllers.proposal_store import ProposalStore
 from walletkit.controllers.request_store import RequestStore
 from walletkit.controllers.session_store import SessionStore
+from walletkit.exceptions import InitializationError, ProtocolError
 from walletkit.types.core import ICore
 from walletkit.utils.crypto_utils import hash_key
 from walletkit.utils.events import EventEmitter
@@ -97,8 +98,12 @@ class SignClient:
                 try:
                     await self.core.event_client.init()
                 except Exception as e:
+                    # Log initialization errors but don't fail SignClient init
+                    # Event client is optional
                     if hasattr(self.core, "logger"):
-                        self.core.logger.warn(str(e))
+                        self.core.logger.warning(f"Event client initialization failed: {e}")
+                    # Re-raise as InitializationError for clarity
+                    raise InitializationError(f"Failed to initialize event client: {e}") from e
             
             self._initialized = True
 
@@ -117,7 +122,9 @@ class SignClient:
                     try:
                         pt = self.core.crypto.get_payload_type(message)
                         self.core.logger.debug(f"[WC_DEBUG] envelope type={pt} topic={topic}")
-                    except Exception:
+                    except Exception as e:
+                        # Debug logging errors should not break protocol flow
+                        self.core.logger.debug(f"[WC_DEBUG] Failed to get payload type: {e}")
                         pass
                 # Decode message
                 payload = await self.core.crypto.decode(topic, message)
@@ -139,11 +146,22 @@ class SignClient:
                 method = payload.get("method")
                 if method:
                     await self._handle_protocol_message(topic, payload)
+            except ProtocolError as e:
+                # Protocol errors should be logged and re-raised
+                if os.getenv("WALLETKIT_WC_DEBUG") == "1":
+                    self.core.logger.error(f"[WC_DEBUG] protocol error topic={topic} err={e}")
+                    self.core.logger.error(f"[WC_DEBUG] raw message prefix={str(message)[:80]}")
+                self.core.logger.error(f"Protocol error handling relayer message: {e}")
+                # Re-raise protocol errors
+                raise
             except Exception as e:
+                # Other errors - log with full context
                 if os.getenv("WALLETKIT_WC_DEBUG") == "1":
                     self.core.logger.error(f"[WC_DEBUG] decode failed topic={topic} err={e}")
                     self.core.logger.error(f"[WC_DEBUG] raw message prefix={str(message)[:80]}")
-                self.core.logger.error(f"Error handling relayer message: {e}")
+                self.core.logger.error(f"Error handling relayer message: {e}", exc_info=True)
+                # Wrap in ProtocolError for consistency
+                raise ProtocolError(f"Failed to handle relayer message: {e}") from e
         
         self.core.relayer.on("message", on_message)
 
@@ -376,7 +394,9 @@ class SignClient:
                     self.core.logger.debug(
                         f"[WC_DEBUG] requester.publicKey len={len(rpk)} prefix={rpk[:10]}"
                     )
-            except Exception:
+            except Exception as e:
+                # Debug logging errors should not break protocol flow
+                self.core.logger.debug(f"[WC_DEBUG] Error in debug logging: {e}")
                 pass
         
         # Emit event
@@ -423,7 +443,9 @@ class SignClient:
             try:
                 pk = str(proposer_public_key)
                 self.core.logger.debug(f"[WC_DEBUG] proposer.publicKey len={len(pk)} prefix={pk[:10]}")
-            except Exception:
+            except Exception as e:
+                # Debug logging errors should not break protocol flow
+                self.core.logger.debug(f"[WC_DEBUG] Error in debug logging: {e}")
                 pass
 
         # Idempotency: if we already approved this proposal_id, reuse the same responder key + session topic.
@@ -1110,8 +1132,13 @@ class SignClient:
         try:
             data = base64.urlsafe_b64decode(padded.encode("utf-8"))
             recap = json.loads(data.decode("utf-8"))
-        except Exception:
+        except (ValueError, json.JSONDecodeError, UnicodeDecodeError) as e:
             # If recap parsing fails, do not mutate the statement (best-effort).
+            # This is expected for invalid recap formats
+            return base
+        except Exception as e:
+            # Unexpected errors - log but don't fail
+            self.core.logger.debug(f"Unexpected error parsing recap: {e}")
             return base
 
         att = recap.get("att") if isinstance(recap, dict) else None
@@ -1168,8 +1195,14 @@ class SignClient:
         try:
             with open(path, "a", encoding="utf-8") as f:
                 f.write(json.dumps(record) + "\n")
-        except Exception:
+        except (FileNotFoundError, PermissionError, OSError) as e:
             # Never break protocol flow due to capture I/O.
+            # Log but don't fail
+            self.core.logger.debug(f"Failed to write capture file: {e}")
+            pass
+        except Exception as e:
+            # Unexpected errors - log but don't fail
+            self.core.logger.debug(f"Unexpected error writing capture file: {e}")
             pass
     
     def _register_expirer_events(self) -> None:
@@ -1201,7 +1234,8 @@ class SignClient:
                             "id": proposal_id,
                         })
             except Exception as e:
-                self.core.logger.error(f"Error handling expiry: {e}")
+                # Log expiry handling errors but don't fail the expirer
+                self.core.logger.error(f"Error handling expiry: {e}", exc_info=True)
         
         self.core.expirer.on(EXPIRER_EVENTS["expired"], on_expired)
     

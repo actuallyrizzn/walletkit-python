@@ -288,13 +288,28 @@ class Crypto:
             sym_key = self._get_sym_key(topic)
             message = decrypt_message(sym_key, encoded, encoding)
             return json.loads(message)
-        except Exception as error:
+        except (ValueError, KeyError) as e:
+            # Invalid key or decryption failure
             client_id = await self.get_client_id()
             self.logger.error(
                 f"Failed to decode message from topic: '{topic}', clientId: '{client_id}'"
             )
-            self.logger.error(str(error))
-            raise
+            raise CryptoError(f"Failed to decode message: {e}") from e
+        except json.JSONDecodeError as e:
+            # Invalid JSON after decryption
+            client_id = await self.get_client_id()
+            self.logger.error(
+                f"Failed to parse decoded message from topic: '{topic}', clientId: '{client_id}'"
+            )
+            raise ProtocolError(f"Invalid JSON in decoded message: {e}") from e
+        except Exception as error:
+            # Unexpected errors
+            client_id = await self.get_client_id()
+            self.logger.error(
+                f"Failed to decode message from topic: '{topic}', clientId: '{client_id}'"
+            )
+            self.logger.error(str(error), exc_info=True)
+            raise CryptoError(f"Unexpected error during decode: {error}") from error
 
     def get_payload_type(self, encoded: str, encoding: str = BASE64) -> int:
         """Get payload type from encoded message.
@@ -355,7 +370,8 @@ class Crypto:
         """Derive a deterministic Ed25519 key pair for relay auth from the client seed."""
         try:
             seed_bytes = bytes.fromhex(seed_hex)
-        except Exception:
+        except ValueError:
+            # Not a valid hex string, treat as UTF-8
             seed_bytes = seed_hex.encode("utf-8")
 
         # Ensure 32 bytes for Ed25519 private key

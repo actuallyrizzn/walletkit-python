@@ -2,6 +2,7 @@
 from typing import Any, Dict, Optional
 
 from walletkit.controllers.sign_client import SignClient
+from walletkit.exceptions import InitializationError
 from walletkit.types.client import Event, EventArguments, IWalletKit
 from walletkit.types.engine import IWalletKitEngine
 
@@ -31,7 +32,9 @@ class Engine(IWalletKitEngine):
             try:
                 await self.client.core.event_client.init()
             except Exception as error:
-                self.client.logger.warn(str(error))
+                # Event client is optional - log but don't fail engine init
+                self.client.logger.warning(f"Event client initialization failed: {error}")
+                # Don't re-raise - event client is optional
 
     async def pair(self, uri: str, activate_pairing: Optional[bool] = None) -> None:
         """Pair with URI.

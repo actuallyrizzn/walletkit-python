@@ -4,6 +4,7 @@ from typing import Any, Callable, Dict, Optional
 from walletkit.constants.client import CLIENT_CONTEXT
 from walletkit.controllers.engine import Engine
 from walletkit.core import Core
+from walletkit.exceptions import InitializationError, WalletKitError
 from walletkit.types.client import IWalletKit, Metadata, Options, SignConfig
 from walletkit.utils.events import EventEmitter
 from walletkit.utils.notifications import Notifications
@@ -53,10 +54,13 @@ class WalletKit(IWalletKit):
             await self.engine.init()
             self._initialized = True
             self.logger.info("WalletKit Initialization Success")
+        except InitializationError:
+            # Re-raise initialization errors as-is
+            raise
         except Exception as error:
             self.logger.error("WalletKit Initialization Failure")
-            self.logger.error(str(error))
-            raise
+            self.logger.error(str(error), exc_info=True)
+            raise InitializationError(f"Failed to initialize WalletKit: {error}") from error
 
     # ---------- Events ----------------------------------------------- #
 

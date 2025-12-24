@@ -8,6 +8,7 @@ from urllib.parse import urlparse, parse_qs, urlencode, urlunparse
 import websockets
 from websockets.client import WebSocketClientProtocol
 
+from walletkit.exceptions import ConnectionError, ProtocolError, TimeoutError
 from walletkit.types.core import ICore
 from walletkit.types.logger import Logger
 from walletkit.utils.events import EventEmitter
@@ -98,7 +99,7 @@ class Relayer:
         
         try:
             await self._do_connect()
-        except Exception as e:
+        except (ConnectionError, TimeoutError) as e:
             self._connecting = False
             self._connected = False
             self.logger.error(f"Failed to connect to relay: {e}")
@@ -106,6 +107,14 @@ class Relayer:
             if self._should_reconnect:
                 await self._start_reconnect()
             raise
+        except Exception as e:
+            self._connecting = False
+            self._connected = False
+            self.logger.error(f"Unexpected error connecting to relay: {e}")
+            # Start reconnection if enabled
+            if self._should_reconnect:
+                await self._start_reconnect()
+            raise ConnectionError(f"Failed to connect to relay: {e}") from e
     
     async def _do_connect(self) -> None:
         """Perform actual connection."""
@@ -141,8 +150,12 @@ class Relayer:
                 websockets.connect(url, origin=self.origin) if self.origin else websockets.connect(url),
                 timeout=10.0,  # 10 second connection timeout
             )
-        except asyncio.TimeoutError:
-            raise TimeoutError("Connection timeout")
+        except asyncio.TimeoutError as e:
+            raise TimeoutError("Connection timeout") from e
+        except websockets.exceptions.InvalidURI as e:
+            raise ConnectionError(f"Invalid relay URL: {e}") from e
+        except websockets.exceptions.InvalidHandshake as e:
+            raise ConnectionError(f"WebSocket handshake failed: {e}") from e
         
         self._connected = True
         self._connecting = False
@@ -184,8 +197,12 @@ class Relayer:
         if self._websocket:
             try:
                 await self._websocket.close()
-            except Exception:
+            except (websockets.exceptions.ConnectionClosed, RuntimeError):
+                # Connection already closed or event loop closed - ignore
                 pass
+            except Exception as e:
+                # Log unexpected errors but don't fail disconnect
+                self.logger.debug(f"Error closing WebSocket: {e}")
             self._websocket = None
         
         if self._receive_task:
@@ -236,7 +253,7 @@ class Relayer:
                     self.logger.debug(f"[WC_DEBUG] irn_publish topic={topic} tag={tag} ttl={ttl} prompt={prompt}")
                 await self.request("irn_publish", params)
                 return  # Success
-            except Exception as e:
+            except (ConnectionError, ProtocolError, TimeoutError) as e:
                 last_error = e
                 if attempt < max_retries - 1:
                     # Exponential backoff
@@ -250,8 +267,14 @@ class Relayer:
                     if not self.connected:
                         try:
                             await self.connect()
-                        except Exception:
+                        except Exception as reconnect_error:
+                            self.logger.debug(f"Reconnection attempt failed: {reconnect_error}")
+                            # Continue with retry loop
                             pass
+            except Exception as e:
+                # Unexpected error - log and re-raise immediately
+                self.logger.error(f"Unexpected error during publish: {e}")
+                raise
         
         # All retries failed
         self.logger.error(f"Failed to publish after {max_retries} attempts: {last_error}")
@@ -362,15 +385,19 @@ class Relayer:
                 timeout=5.0,  # 5 second send timeout
             )
             self._last_heartbeat = asyncio.get_event_loop().time()
-        except asyncio.TimeoutError:
+        except asyncio.TimeoutError as e:
             self.logger.error("Send timeout")
             self._message_queue.append(payload)
-            raise TimeoutError("Send operation timed out")
+            raise TimeoutError("Send operation timed out") from e
+        except websockets.exceptions.ConnectionClosed as e:
+            self.logger.error(f"Connection closed while sending: {e}")
+            self._message_queue.append(payload)
+            raise ConnectionError("WebSocket connection closed") from e
         except Exception as e:
             self.logger.error(f"Failed to send message: {e}")
             # Queue message for retry
             self._message_queue.append(payload)
-            raise
+            raise ConnectionError(f"Failed to send message: {e}") from e
 
     async def _receive_messages(self) -> None:
         """Receive messages from WebSocket."""
@@ -386,16 +413,19 @@ class Relayer:
                     await self._handle_message(payload)
                 except json.JSONDecodeError as e:
                     self.logger.error(f"Failed to parse message: {e}")
+                    # Continue processing other messages
                 except Exception as e:
-                    self.logger.error(f"Error handling message: {e}")
-        except websockets.exceptions.ConnectionClosed:
+                    self.logger.error(f"Error handling message: {e}", exc_info=True)
+                    # Continue processing other messages
+        except websockets.exceptions.ConnectionClosed as e:
             self._connected = False
+            self.logger.info(f"WebSocket connection closed: {e}")
             await self.events.emit("disconnect", {})
             # Start reconnection if enabled
             if self._should_reconnect:
                 await self._start_reconnect()
         except Exception as e:
-            self.logger.error(f"Error receiving messages: {e}")
+            self.logger.error(f"Error receiving messages: {e}", exc_info=True)
             self._connected = False
             # Start reconnection if enabled
             if self._should_reconnect:
@@ -418,7 +448,9 @@ class Relayer:
                     if isinstance(data, dict):
                         meta = {k: data.get(k) for k in ["topic", "tag", "publishedAt"] if k in data}
                         self.logger.debug(f"[WC_DEBUG] irn_subscription meta={meta}")
-                except Exception:
+                except Exception as e:
+                    # Debug logging errors should not break protocol flow
+                    self.logger.debug(f"Error in debug logging: {e}")
                     pass
             
             if topic and message:
@@ -439,7 +471,9 @@ class Relayer:
                 fut = self._pending_rpc.get(req_id)
                 if fut and not fut.done():
                     fut.set_result(payload)
-            except Exception:
+            except (ValueError, TypeError, KeyError) as e:
+                # Invalid request ID format - log but continue
+                self.logger.debug(f"Invalid request ID in response: {e}")
                 pass
             # Fire-and-forget event emission
             asyncio.create_task(self.events.emit("response", payload))
@@ -450,8 +484,13 @@ class Relayer:
             message = self._message_queue.pop(0)
             try:
                 await self._send(message)
+            except (ConnectionError, TimeoutError) as e:
+                self.logger.warning(f"Failed to send queued message: {e}")
+                # Re-queue for retry
+                self._message_queue.insert(0, message)
+                break
             except Exception as e:
-                self.logger.error(f"Failed to send queued message: {e}")
+                self.logger.error(f"Unexpected error sending queued message: {e}")
                 # Re-queue for retry
                 self._message_queue.insert(0, message)
                 break
@@ -486,8 +525,15 @@ class Relayer:
                 await self._do_connect()
                 self.logger.info("Reconnection successful")
                 break
-            except Exception as e:
+            except (ConnectionError, TimeoutError) as e:
                 self.logger.warning(f"Reconnection attempt {self._reconnect_attempts} failed: {e}")
+                if self._reconnect_attempts >= self._max_reconnect_attempts:
+                    self.logger.error("Max reconnection attempts reached")
+                    await self.events.emit("reconnect_failed", {
+                        "attempts": self._reconnect_attempts,
+                    })
+            except Exception as e:
+                self.logger.error(f"Unexpected error during reconnection: {e}", exc_info=True)
                 if self._reconnect_attempts >= self._max_reconnect_attempts:
                     self.logger.error("Max reconnection attempts reached")
                     await self.events.emit("reconnect_failed", {
@@ -509,8 +555,12 @@ class Relayer:
                         pong_waiter = await self._websocket.ping()
                         await asyncio.wait_for(pong_waiter, timeout=10.0)
                         self._last_heartbeat = asyncio.get_event_loop().time()
-                    except Exception:
+                    except (asyncio.TimeoutError, websockets.exceptions.ConnectionClosed):
                         # fall back to timeout check below
+                        pass
+                    except Exception as e:
+                        # Log unexpected errors but continue with timeout check
+                        self.logger.debug(f"Error in heartbeat ping: {e}")
                         pass
                 
                 current_time = asyncio.get_event_loop().time()
@@ -522,8 +572,11 @@ class Relayer:
                         if self._websocket:
                             try:
                                 await self._websocket.close()
-                            except Exception:
+                            except (websockets.exceptions.ConnectionClosed, RuntimeError):
+                                # Connection already closed or event loop closed
                                 pass
+                            except Exception as e:
+                                self.logger.debug(f"Error closing WebSocket during heartbeat timeout: {e}")
                             self._websocket = None
                         await self.events.emit("disconnect", {})
                         if self._should_reconnect:
@@ -532,7 +585,7 @@ class Relayer:
             except asyncio.CancelledError:
                 break
             except Exception as e:
-                self.logger.error(f"Error in heartbeat monitor: {e}")
+                self.logger.error(f"Error in heartbeat monitor: {e}", exc_info=True)
     
     def _check_initialized(self) -> None:
         """Check if relayer is initialized."""
