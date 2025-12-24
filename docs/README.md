@@ -1,67 +1,21 @@
-# WalletKit Python Port Documentation
+# WalletKit Python Documentation
 
-This directory contains comprehensive documentation for planning and executing the port of `@reown/walletkit` from TypeScript/JavaScript to Python.
+This directory contains documentation for the WalletKit Python SDK.
 
-## Overview
+## Documentation
 
-The WalletKit SDK streamlines the integration process for wallet developers to include authentication and transaction signing features. This port will bring the same functionality to the Python ecosystem while maintaining API compatibility where possible.
+- **[API Reference](API.md)** - Complete API documentation for all classes, methods, and properties
+- **[Usage Guide](USAGE.md)** - Comprehensive usage examples, integration guides, and best practices
+- **[Wallet Setup](WALLET_SETUP.md)** - Guide for setting up wallets for integration testing
 
-## Documentation Structure
+## Quick Start
 
-### Planning Documents
+For a quick introduction, see the main [README.md](../README.md) in the project root.
 
-- **[Architecture Analysis](architecture-analysis.md)** - Detailed breakdown of the current TypeScript codebase structure, components, and design patterns
-- **[Reference Implementations](reference-implementations.md)** - Catalog of reference implementations in `tmp/` folder (WalletConnect Core and Utils)
-- **[Dependency Deep Dive](dependency-deep-dive.md)** - In-depth analysis of WalletConnect Core, Utils, and all dependencies
-- **[Dependencies Analysis](dependencies-analysis.md)** - Strategy for porting or replacing JavaScript dependencies with Python equivalents
+For detailed API documentation, see [API.md](API.md).
 
-### Implementation Planning
+For usage examples and integration guides, see [USAGE.md](USAGE.md).
 
-- **[Project Plan](project-plan.md)** - Complete project plan with venv setup, testing suite, and workflow
-- **[Python Mapping](python-mapping.md)** - JavaScript/TypeScript to Python language feature and library mappings
-- **[Port Plan](port-plan.md)** - Phased implementation plan with detailed steps
-- **[API Compatibility](api-compatibility.md)** - API surface analysis and compatibility goals
+## License
 
-### Development Documents
-
-- **[Implementation Notes](implementation-notes.md)** - Design decisions, challenges, and solutions log
-- **[Testing Strategy](testing-strategy.md)** - Testing approach, framework selection, and validation plan
-
-## Reference Materials
-
-The `tmp/` folder contains reference implementations of:
-- `@walletconnect/core` - Core WalletConnect protocol implementation
-- `@walletconnect/utils` - Utility functions for WalletConnect
-
-These are critical dependencies that walletkit relies on and will need to be ported or replaced.
-
-## Quick Navigation
-
-- **New to the project?** Start with [Architecture Analysis](architecture-analysis.md) and [Reference Implementations](reference-implementations.md)
-- **Planning the port?** Review [Dependencies Analysis](dependencies-analysis.md) and [Port Plan](port-plan.md)
-- **Implementing?** Follow [Port Plan](port-plan.md) and reference [Python Mapping](python-mapping.md)
-- **Making decisions?** Document in [Implementation Notes](implementation-notes.md)
-
-## Current Status
-
-**Research Phase: COMPLETE** ✅
-
-Critical research has been completed:
-- SignClient API surface fully documented
-- Core controllers (Pairing, Crypto, Relayer) analyzed in detail
-- Protocol message formats understood
-- Crypto implementation details documented
-- Python library research completed
-
-See [Research Findings](research-findings.md) for detailed analysis.
-
-**Next Phase:** Implementation - Ready to start porting.
-
-## Contributing
-
-When updating documentation:
-1. Keep references to source files accurate
-2. Update TODOs as they are completed
-3. Document decisions in [Implementation Notes](implementation-notes.md)
-4. Keep the port plan updated with progress
-
+This documentation is licensed under the Creative Commons Attribution-ShareAlike 4.0 International License (CC-BY-SA-4.0). See [LICENSE-DOCS](../LICENSE-DOCS) for details.

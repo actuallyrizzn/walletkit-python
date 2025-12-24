@@ -49,3 +49,6 @@ tmp/
 *.log
 
 coverage.xml
+
+# Reference JavaScript implementation
+js/

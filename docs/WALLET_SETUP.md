@@ -147,3 +147,7 @@ The test will:
 4. When venice.ai requests signing, actually sign with the private key
 5. Return the signature
 
+## License
+
+This documentation is licensed under the Creative Commons Attribution-ShareAlike 4.0 International License (CC-BY-SA-4.0). See [LICENSE-DOCS](../LICENSE-DOCS) for details.
+
